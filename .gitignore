@@ -4,5 +4,6 @@ vision/
 tutorial/
 .idea/
 __pycache__/
-model/*
 ignore/
+model/ft_ResNet50_VeRi/
+model/siamese/
