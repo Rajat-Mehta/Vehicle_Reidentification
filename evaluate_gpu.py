@@ -97,7 +97,7 @@ def compute_mAP(index, good_index, junk_index):
     return ap, cmc
 
 ######################################################################
-result = scipy.io.loadmat('pytorch_result_VeRi.mat')
+result = scipy.io.loadmat('./saved_features/pytorch_result_VeRi.mat')
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
@@ -105,11 +105,11 @@ gallery_feature = torch.FloatTensor(result['gallery_f'])
 gallery_cam = result['gallery_cam'][0]
 gallery_label = result['gallery_label'][0]
 
-multi = os.path.isfile('multi_query.mat')
+multi = os.path.isfile('./saved_features/multi_query.mat')
 
 
 if multi:
-    m_result = scipy.io.loadmat('multi_query.mat')
+    m_result = scipy.io.loadmat('./saved_features/multi_query.mat')
     mquery_feature = torch.FloatTensor(m_result['mquery_f'])
     mquery_cam = m_result['mquery_cam'][0]
     mquery_label = m_result['mquery_label'][0]
