@@ -17,6 +17,7 @@ import os
 import scipy.io
 import yaml
 from model import ft_net, ft_net_dense, ft_net_NAS, PCB, PCB_test
+from train_and_test_siamese import *
 
 #fp16
 try:
@@ -29,35 +30,51 @@ except ImportError: # will be 3.x series
 
 parser = argparse.ArgumentParser(description='Training')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--which_epoch',default='29', type=str, help='0,1,2,3...or last')
-parser.add_argument('--test_dir',default='../Datasets/VeRi_with_plate/pytorch',type=str, help='./test_data')
-parser.add_argument('--name', default='ft_ResNet50_VeRi', type=str, help='save model path')
+parser.add_argument('--which_epoch',default='59', type=str, help='0,1,2,3...or last')
+parser.add_argument('--test_dir',default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
+parser.add_argument('--name', type=str, help='save model path')
 parser.add_argument('--batchsize', default=256, type=int, help='batchsize')
-parser.add_argument('--use_dense', action='store_true', help='use densenet121' )
-parser.add_argument('--PCB', action='store_true', help='use PCB' )
-parser.add_argument('--multi', action='store_true', help='use multiple query' )
-parser.add_argument('--fp16', action='store_true', help='use fp16.' )
+parser.add_argument('--use_dense', action='store_true', help='use densenet121')
+parser.add_argument('--PCB', action='store_true', help='use PCB')
+parser.add_argument('--use_siamese', action='store_true', help='use siamese')
+parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
+parser.add_argument('--multi', action='store_true', help='use multiple query')
+parser.add_argument('--fp16', action='store_true', help='use fp16.')
 
 opt = parser.parse_args()
-###load config###
+### load config ###
 # load the training config
-config_path = os.path.join('./model',opt.name,'opts.yaml')
-with open(config_path, 'r') as stream:
-        config = yaml.load(stream)
-opt.fp16 = config['fp16'] 
-opt.PCB = config['PCB']
-opt.use_dense = config['use_dense']
-opt.use_NAS = config['use_NAS']
-opt.stride = config['stride']
 
-if 'nclasses' in config: # tp compatible with old config files
-    opt.nclasses = config['nclasses']
-else: 
-    opt.nclasses = 751 
+if opt.use_ftnet is False and opt.use_siamese is False:
+    print("No model selected. Please select at least one model: use_ftnet or use_siamese")
+    exit()
+
+if opt.use_ftnet:
+    name = "ft_ResNet50_VeRi"
+elif opt.use_siamese:
+    name = "siamese"
+
+opt.nclasses = 575
+
+config_path = os.path.join('./model', name, 'opts.yaml')
+if os.path.isfile(config_path):
+    with open(config_path, 'r') as stream:
+            config = yaml.load(stream)
+    opt.fp16 = config['fp16']
+    opt.PCB = config['PCB']
+    opt.use_dense = config['use_dense']
+    opt.use_ftnet = config['use_ftnet']
+    opt.use_NAS = config['use_NAS']
+    opt.stride = config['stride']
+    opt.use_siamese = config['use_siamese']
+
+    if 'nclasses' in config:  # tp compatible with old config files
+        opt.nclasses = config['nclasses']
+    else:
+        opt.nclasses = 575
 
 str_ids = opt.gpu_ids.split(',')
-#which_epoch = opt.which_epoch
-name = opt.name
+# which_epoch = opt.which_epoch
 test_dir = opt.test_dir
 
 gpu_ids = []
@@ -120,7 +137,8 @@ use_gpu = torch.cuda.is_available()
 # Load model
 #---------------------------
 def load_network(network):
-    save_path = os.path.join('./model',name,'net_%s.pth'%opt.which_epoch)
+    print(name, opt.which_epoch)
+    save_path = os.path.join('./model', name, 'net_%s.pth'%opt.which_epoch)
     network.load_state_dict(torch.load(save_path))
     return network
 
@@ -196,6 +214,10 @@ gallery_cam,gallery_label = get_id(gallery_path)
 query_cam,query_label = get_id(query_path)
 
 
+if opt.use_siamese:
+    get_siamese_features(gallery_cam, gallery_label, query_cam, query_label)
+
+
 if opt.multi:
     mquery_path = image_datasets['multi-query'].imgs
     mquery_cam,mquery_label = get_id(mquery_path)
@@ -245,7 +267,7 @@ with torch.no_grad():
     
 # Save to Matlab for check
 result = {'gallery_f':gallery_feature.numpy(),'gallery_label':gallery_label,'gallery_cam':gallery_cam,'query_f':query_feature.numpy(),'query_label':query_label,'query_cam':query_cam}
-scipy.io.savemat('pytorch_result_VeRi.mat',result)
+scipy.io.savemat('./saved_features/pytorch_result_VeRi.mat',result)
 if opt.multi:
     result = {'mquery_f':mquery_feature.numpy(),'mquery_label':mquery_label,'mquery_cam':mquery_cam}
-    scipy.io.savemat('multi_query.mat',result)
+    scipy.io.savemat('./saved_features/multi_query.mat',result)

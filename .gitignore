@@ -7,3 +7,8 @@ __pycache__/
 ignore/
 model/ft_ResNet50_VeRi/
 model/siamese/
+model/backup_models/*
+saved_features/backup_features
+saved_features/pytorch_result.mat
+
+results/result_not_keep_5\.txt

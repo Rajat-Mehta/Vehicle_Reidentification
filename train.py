@@ -21,7 +21,7 @@ from random_erasing import RandomErasing
 import yaml
 import math
 from shutil import copyfile
-from train_siamese import *
+from train_and_test_siamese import *
 
 
 version =  torch.__version__
@@ -36,26 +36,42 @@ except ImportError: # will be 3.x series
 # --------
 parser = argparse.ArgumentParser(description='Training')
 parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--name',default='ft_ResNet50_VeRi', type=str, help='output model name')
 parser.add_argument('--data_dir',default='../Datasets/VeRi_with_plate/pytorch',type=str, help='training dir path')
 parser.add_argument('--train_all', action='store_true', help='use all training data' )
 parser.add_argument('--color_jitter', action='store_true', help='use color jitter in training' )
 parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
 parser.add_argument('--stride', default=2, type=int, help='stride')
 parser.add_argument('--erasing_p', default=0, type=float, help='Random Erasing probability, in [0,1]')
-parser.add_argument('--use_dense', action='store_true', help='use densenet121' )
-parser.add_argument('--use_siamese', action='store_true', help='use siamese' )
-parser.add_argument('--use_NAS', action='store_true', help='use NAS' )
+parser.add_argument('--use_dense', action='store_true', help='use densenet121')
+parser.add_argument('--use_ftnet', action='store_true', help='use ftnet')
+parser.add_argument('--use_siamese', action='store_true', help='use siamese')
+parser.add_argument('--use_NAS', action='store_true', help='use NAS')
+parser.add_argument('--PCB', action='store_true', help='use PCB+ResNet50')
 parser.add_argument('--warm_epoch', default=0, type=int, help='the first K epoch that needs warm up')
 parser.add_argument('--lr', default=0.05, type=float, help='learning rate')
 parser.add_argument('--droprate', default=0.5, type=float, help='drop rate')
-parser.add_argument('--PCB', action='store_true', help='use PCB+ResNet50' )
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory' )
 opt = parser.parse_args()
 
 fp16 = opt.fp16
 data_dir = opt.data_dir
-name = opt.name
+
+if opt.use_dense is False and opt.use_siamese is False and opt.use_NAS is False and opt.use_ftnet is False:
+    print("No model selectedd. Please select at least one model to train like: use_ftnet or use_siamese")
+    exit()
+
+if opt.use_dense:
+    name = "ft_net_dense"
+elif opt.use_siamese:
+    name = "siamese"
+elif opt.use_NAS:
+    name = "ft_net_NAS"
+elif opt.PCB:
+    name = "PCB"
+elif opt.use_ftnet:
+    name = "ft_ResNet50_VeRi"
+
+
 str_ids = opt.gpu_ids.split(',')
 gpu_ids = []
 for str_id in str_ids:
@@ -148,7 +164,7 @@ print(time.time()-since)
 # In the following, parameter ``scheduler`` is an LR scheduler object from
 # ``torch.optim.lr_scheduler``.
 
-y_loss = {} # loss history
+y_loss = {}  # loss history
 y_loss['train'] = []
 y_loss['val'] = []
 y_err = {}
@@ -303,12 +319,27 @@ def save_network(network, epoch_label):
         network.cuda(gpu_ids[0])
 
 
+def save_train_config_files():
+    dir_name = os.path.join('./model', name)
+    if not os.path.isdir(dir_name):
+        os.mkdir(dir_name)
+    # record every run
+    copyfile('./train.py', dir_name + '/train.py')
+    copyfile('./model.py', dir_name + '/model.py')
+    if opt.use_siamese:
+        copyfile('./train_and_test_siamese.py', dir_name + '/train_and_test_siamese.py')
+
+    # save opts
+    with open('%s/opts.yaml' % dir_name, 'w') as fp:
+        yaml.dump(vars(opt), fp, default_flow_style=False)
+
 ######################################################################
 # Finetuning the convnet
 # ----------------------
 #
 # Load a pretrainied model and reset final fully connected layer.
 #
+
 
 if opt.use_dense:
     model = ft_net_dense(len(class_names), opt.droprate)
@@ -323,6 +354,7 @@ if opt.PCB:
 
 if opt.use_siamese:
     train_siamese_network()
+    save_train_config_files()
     exit()
 
 
@@ -371,16 +403,7 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
 #
 # It should take around 1-2 hours on GPU. 
 #
-dir_name = os.path.join('./model',name)
-if not os.path.isdir(dir_name):
-    os.mkdir(dir_name)
-#record every run
-copyfile('./train.py', dir_name+'/train.py')
-copyfile('./model.py', dir_name+'/model.py')
-
-# save opts
-with open('%s/opts.yaml'%dir_name,'w') as fp:
-    yaml.dump(vars(opt), fp, default_flow_style=False)
+save_train_config_files()
 
 # model to gpu
 model = model.cuda()
