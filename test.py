@@ -29,9 +29,9 @@ except ImportError: # will be 3.x series
 # --------
 
 parser = argparse.ArgumentParser(description='Training')
-parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--which_epoch',default='59', type=str, help='0,1,2,3...or last')
-parser.add_argument('--test_dir',default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
+parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+parser.add_argument('--which_epoch', default='59', type=str, help='0,1,2,3...or last')
+parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
 parser.add_argument('--name', type=str, help='save model path')
 parser.add_argument('--batchsize', default=256, type=int, help='batchsize')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
@@ -50,7 +50,7 @@ if opt.use_ftnet is False and opt.use_siamese is False:
     exit()
 
 if opt.use_ftnet:
-    name = "ft_ResNet50_VeRi"
+    name = "ft_ResNet"
 elif opt.use_siamese:
     name = "siamese"
 

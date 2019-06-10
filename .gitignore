@@ -12,3 +12,5 @@ saved_features/backup_features
 saved_features/pytorch_result.mat
 
 results/result_not_keep_5\.txt
+
+model/ft_ResNet/net*
