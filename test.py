@@ -56,6 +56,7 @@ elif opt.use_siamese:
 
 opt.nclasses = 575
 
+
 config_path = os.path.join('./model', name, 'opts.yaml')
 if os.path.isfile(config_path):
     with open(config_path, 'r') as stream:
@@ -72,6 +73,13 @@ if os.path.isfile(config_path):
         opt.nclasses = config['nclasses']
     else:
         opt.nclasses = 575
+
+print("Model name: ", name)
+print("Epoch: ", opt.which_epoch)
+print("Use_siamese: ", opt.use_siamese)
+print("Use_ftnet: ", opt.use_ftnet)
+print("nclasses: ", opt.nclasses)
+
 
 str_ids = opt.gpu_ids.split(',')
 # which_epoch = opt.which_epoch
@@ -137,7 +145,6 @@ use_gpu = torch.cuda.is_available()
 # Load model
 #---------------------------
 def load_network(network):
-    print(name, opt.which_epoch)
     save_path = os.path.join('./model', name, 'net_%s.pth'%opt.which_epoch)
     network.load_state_dict(torch.load(save_path))
     return network
@@ -215,7 +222,7 @@ query_cam,query_label = get_id(query_path)
 
 
 if opt.use_siamese:
-    get_siamese_features(gallery_cam, gallery_label, query_cam, query_label)
+    get_siamese_features(gallery_cam, gallery_label, query_cam, query_label, opt.nclasses)
 
 
 if opt.multi:
@@ -229,8 +236,8 @@ if opt.use_dense:
     model_structure = ft_net_dense(opt.nclasses)
 elif opt.use_NAS:
     model_structure = ft_net_NAS(opt.nclasses)
-else:
-    model_structure = ft_net(opt.nclasses, stride = opt.stride)
+elif opt.use_ftnet:
+    model_structure = ft_net(opt.nclasses, stride=opt.stride)
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses)
@@ -260,14 +267,15 @@ if use_gpu:
 
 # Extract feature
 with torch.no_grad():
-    gallery_feature = extract_feature(model,dataloaders['gallery'])
-    query_feature = extract_feature(model,dataloaders['query'])
+    gallery_feature = extract_feature(model, dataloaders['gallery'])
+    query_feature = extract_feature(model, dataloaders['query'])
     if opt.multi:
-        mquery_feature = extract_feature(model,dataloaders['multi-query'])
+        mquery_feature = extract_feature(model, dataloaders['multi-query'])
     
 # Save to Matlab for check
-result = {'gallery_f':gallery_feature.numpy(),'gallery_label':gallery_label,'gallery_cam':gallery_cam,'query_f':query_feature.numpy(),'query_label':query_label,'query_cam':query_cam}
-scipy.io.savemat('./saved_features/pytorch_result_VeRi.mat',result)
+result = {'gallery_f': gallery_feature.numpy(), 'gallery_label': gallery_label, 'gallery_cam': gallery_cam,
+          'query_f': query_feature.numpy(), 'query_label': query_label, 'query_cam': query_cam}
+scipy.io.savemat('./saved_features/pytorch_result_VeRi.mat', result)
 if opt.multi:
-    result = {'mquery_f':mquery_feature.numpy(),'mquery_label':mquery_label,'mquery_cam':mquery_cam}
-    scipy.io.savemat('./saved_features/multi_query.mat',result)
+    result = {'mquery_f': mquery_feature.numpy(), 'mquery_label': mquery_label, 'mquery_cam': mquery_cam}
+    scipy.io.savemat('./saved_features/multi_query.mat', result)

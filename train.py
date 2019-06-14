@@ -40,6 +40,7 @@ parser.add_argument('--data_dir',default='../Datasets/VeRi_with_plate/pytorch',t
 parser.add_argument('--train_all', action='store_true', help='use all training data' )
 parser.add_argument('--color_jitter', action='store_true', help='use color jitter in training' )
 parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
+parser.add_argument('--epochs', default=60, type=int, help='epochs')
 parser.add_argument('--stride', default=2, type=int, help='stride')
 parser.add_argument('--erasing_p', default=0, type=float, help='Random Erasing probability, in [0,1]')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
@@ -253,7 +254,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                     optimizer.step()
 
                 # statistics
-                if int(version[0])>0 or int(version[2]) > 3: # for the new version like 0.4.0, 0.5.0 and 1.0.0
+                if int(version[0])>0 or int(version[2]) > 3:  # for the new version like 0.4.0, 0.5.0 and 1.0.0
                     running_loss += loss.item() * now_batch_size
                 else :  # for the old version like 0.3.0 and 0.3.1
                     running_loss += loss.data[0] * now_batch_size
@@ -353,8 +354,8 @@ if opt.PCB:
 
 
 if opt.use_siamese:
-    train_siamese_network()
     save_train_config_files()
+    train_siamese_network(len(class_names), fp16, data_transforms['train'], opt.batchsize, opt.epochs)
     exit()
 
 
@@ -415,5 +416,5 @@ if fp16:
 criterion = nn.CrossEntropyLoss()
 
 model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=60)
+                       num_epochs=opt.epochs)
 

@@ -15,14 +15,31 @@ from torch import optim
 import os
 from torch.autograd import Variable
 import torch.nn.functional as F
+import torch.nn as nn
+import time
+from random_erasing import RandomErasing
+
+
+try:
+    from apex.fp16_utils import *
+    from apex import amp, optimizers
+except ImportError: # will be 3.x series
+    print('This is not an error. If you want to use low precision, i.e., fp16, please install the apex with cuda support (https://github.com/NVIDIA/apex) and update pytorch to 1.0')
+######################################################################
+
+DATA_TRANSFORMS = transforms.Compose([
+        transforms.Resize((256, 128), interpolation=3),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
 
 
 class Config():
     training_dir = "../Datasets/VeRi_with_plate/pytorch/train"
     testing_dir = "../Datasets/VeRi_with_plate/pytorch/gallery"
     data_dir = '../Datasets/VeRi_with_plate/pytorch'
-    train_batch_size = 64
-    train_number_epochs = 100
+    train_batch_size = 32
+    train_number_epochs = 60
 
 
 class SiameseNetworkDataset(Dataset):
@@ -85,28 +102,23 @@ def show_plot(iteration, loss):
     plt.show()
 
 
-def get_dataloader():
+def get_dataloader(data_transforms, batch_size):
     folder_dataset = dset.ImageFolder(root=Config.training_dir)
 
     siamese_dataset = SiameseNetworkDataset(imageFolderDataset=folder_dataset,
-                                            transform=transforms.Compose([transforms.Resize((100,100)),
-                                                                          transforms.ToTensor()
-                                                                          ]),
+                                            transform=data_transforms,
                                             should_invert=False)
 
-    vis_dataloader = DataLoader(siamese_dataset, shuffle=True, num_workers=8, batch_size=8)
+    vis_dataloader = DataLoader(siamese_dataset, shuffle=True, num_workers=8, batch_size=batch_size)
     dataiter = iter(vis_dataloader)
 
 
     example_batch = next(dataiter)
     concatenated = torch.cat((example_batch[0], example_batch[1]), 0)
-    #imshow(torchvision.utils.make_grid(concatenated))
-    #print(example_batch[2].numpy())
+    # imshow(torchvision.utils.make_grid(concatenated))
+    # print(example_batch[2].numpy())
 
-    train_dataloader = DataLoader(siamese_dataset,
-                            shuffle=True,
-                            num_workers=8,
-                            batch_size=Config.train_batch_size)
+    train_dataloader = DataLoader(siamese_dataset, shuffle=True, num_workers=8, batch_size=batch_size)
 
     return train_dataloader
 
@@ -123,30 +135,62 @@ def save_model(epoch, model, loss, optimizer):
     }, save_path)
 
 
-def train_siamese_network():
-    net = SiameseNetwork().cuda()
+def train_siamese_network(nclasses, fp16, transform, batch_size, num_epochs):
+    data_transforms = transform
+
+    since = time.time()
+    net = SiameseNetwork(nclasses).cuda()
+    net.classifier.classifier = nn.Sequential()
+
+    print(net)
+    print("Start time: ", since)
+
     criterion = ContrastiveLoss()
     optimizer = optim.Adam(net.parameters(), lr=0.0005)
+
+    if fp16:
+        # model = network_to_half(model)
+        # optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
+        print("Memory saving is on using fp16")
+        net, optimizer = amp.initialize(net, optimizer, opt_level="O1")
 
     counter = []
     loss_history = []
     iteration_number = 0
-    train_dataloader = get_dataloader()
+    train_dataloader = get_dataloader(data_transforms, batch_size)
     print("Started training siamese network")
-    for epoch in range(0, 60):
+
+    for epoch in range(0, num_epochs):
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
         for i, data in enumerate(train_dataloader, 0):
             img0, img1, label = data
             img0, img1, label = img0.cuda(), img1.cuda(), label.cuda()
+
             optimizer.zero_grad()
             output1, output2 = net(img0, img1)
+
             loss_contrastive = criterion(output1, output2, label)
-            loss_contrastive.backward()
+            # loss_contrastive.backward()
+            # optimizer.step()
+            if fp16:  # we use optimier to backward loss
+                with amp.scale_loss(loss_contrastive, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss_contrastive.backward()
             optimizer.step()
+
             if i % 10 == 0:
-                print("Epoch number {}\n Current loss {}\n".format(epoch, loss_contrastive.item()))
                 iteration_number += 10
                 counter.append(iteration_number)
                 loss_history.append(loss_contrastive.item())
+
+        time_elapsed = time.time() - since
+        print('Training complete in {:.0f}m {:.0f}s'.format(
+            time_elapsed // 60, time_elapsed % 60))
+        print("Epoch number {} finished, Current loss {}\n".format(epoch, loss_contrastive.item()))
+
         if epoch % 10 == 9:
             save_model(epoch, net, loss_contrastive, optimizer)
     show_plot(counter, loss_history)
@@ -155,15 +199,19 @@ def train_siamese_network():
 def test_siamese(net):
 
     folder_dataset_test = dset.ImageFolder(root=Config.testing_dir)
+
     siamese_dataset = SiameseNetworkDataset(imageFolderDataset=folder_dataset_test,
-                                            transform=transforms.Compose([transforms.Resize((100, 100)),
-                                                                          transforms.ToTensor()
-                                                                          ])
+                                            transform=transforms.Compose([
+        transforms.Resize((256, 128), interpolation=3),
+        transforms.ToTensor()
+        ])
                                             , should_invert=False)
 
     test_dataloader = DataLoader(siamese_dataset, num_workers=6, batch_size=16, shuffle=True)
     dataiter = iter(test_dataloader)
     batch = next(dataiter)
+    concatenated = torch.cat((batch[0], batch[1]), 0)
+    imshow(torchvision.utils.make_grid(concatenated),100)
 
     for i in range(len(batch[0])):
         x0, x1, label = batch[0][i], batch[1][i], batch[2][i]
@@ -173,6 +221,7 @@ def test_siamese(net):
         concatenated = torch.cat((x0, x1), 0)
         output1, output2 = net(Variable(x0).cuda(), Variable(x1).cuda())
         euclidean_distance = F.pairwise_distance(output1, output2)
+
         imshow(torchvision.utils.make_grid(concatenated), i,
                'Dissimilarity: {:.2f}, Same: {}'.format(euclidean_distance.item(),
                                                         "Yes" if label.item() == 0.0 else "No"))
@@ -195,11 +244,10 @@ def extract_features(net, dataloader):
     return features
 
 
-def get_siamese_features(gallery_cam, gallery_label, query_cam, query_label):
-    model = get_siamese_model()
-    data_transforms = transforms.Compose([transforms.Resize((100, 100)), transforms.ToTensor()])
+def get_siamese_features(gallery_cam, gallery_label, query_cam, query_label, nclasses):
+    model = get_siamese_model(nclasses)
 
-    image_datasets = {x: datasets.ImageFolder(os.path.join(Config.data_dir, x), data_transforms) for x in ['gallery', 'query']}
+    image_datasets = {x: datasets.ImageFolder(os.path.join(Config.data_dir, x), DATA_TRANSFORMS) for x in ['gallery', 'query']}
     dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=16,
                                                   shuffle=False, num_workers=16) for x in ['gallery', 'query']}
     gallery_feature = extract_features(model, dataloaders['gallery'])
@@ -212,10 +260,11 @@ def get_siamese_features(gallery_cam, gallery_label, query_cam, query_label):
     exit()
 
 
-def get_siamese_model():
+def get_siamese_model(nclasses):
     device = torch.device("cuda")
-    model = SiameseNetwork()
-    checkpoint = torch.load('./model/siamese/net_59.pth')
+    model = SiameseNetwork(nclasses)
+    model.classifier.classifier = nn.Sequential()
+    checkpoint = torch.load('./model/siamese/net_29.pth')
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()
@@ -224,7 +273,7 @@ def get_siamese_model():
 
 def main():
     print('Testing the trained Siamese network on VeRi dataset:')
-    model = get_siamese_model()
+    model = get_siamese_model(575)
     test_siamese(model)
     print('Testing finished. Check result of the test in model/siamese/test_results folder')
 
