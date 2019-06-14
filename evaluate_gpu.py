@@ -4,9 +4,15 @@ import numpy as np
 #import time
 import os
 import random
+import argparse
+import torch.nn.functional as F
 
-KEEP_NUM = 5
-#######################################################################
+parser = argparse.ArgumentParser(description='Evaluate')
+parser.add_argument('--use_siamese',  action='store_true', help='evaluate siamese or not')
+parser.add_argument('--KEEP_NUM',  default=5, help='how many images to keep from other cameras')
+
+opts = parser.parse_args()
+KEEP_NUM = int(opts.KEEP_NUM)
 # Evaluate
 def evaluate(qf,ql,qc,gf,gl,gc):
     query = qf.view(-1,1)
@@ -32,11 +38,49 @@ def evaluate(qf,ql,qc,gf,gl,gc):
 
     # limit the number of images per camera/view in gallery set to (max) keep_num
     new_junk = limit_gallery_images(ql, qc,  gl, gc, junk_index, KEEP_NUM)
-    good_index = np.setdiff1d(good_index, new_junk, assume_unique=True)
     junk_index = np.append(junk_index, new_junk)
 
     # remove all images from same camera as query_camera
     junk_index = np.append(junk_index, camera_index)
+    good_index = np.setdiff1d(good_index, junk_index, assume_unique=True)
+    CMC_tmp = compute_mAP(index, good_index, junk_index)
+    return CMC_tmp
+
+
+def find_distance(feat1, feat2):
+    return F.pairwise_distance(feat1, feat2, keepdim=True)
+
+
+def evaluate_siamese(qf, ql, qc, gf, gl, gc):
+    query = qf.view(-1, 1)
+    # print(query.shape)
+    qf = qf.unsqueeze_(0).repeat(len(gf), 1)
+    distance = F.pairwise_distance(qf, gf, keepdim=True)
+
+    distance = distance.squeeze(1).cpu()
+    distance = distance.numpy()
+    # predict index
+    index = np.argsort(distance)  # from small to large
+
+    # index = index[0:2000]
+    # good index
+    query_index = np.argwhere(gl == ql)
+    camera_index = np.argwhere(gc == qc)
+
+    good_index = np.setdiff1d(query_index, camera_index, assume_unique=True)
+
+    junk_index1 = np.argwhere(gl == -1)
+    junk_index2 = np.intersect1d(query_index, camera_index)
+    junk_index = np.append(junk_index2, junk_index1)  # .flatten())
+
+    # limit the number of images per camera/view in gallery set to (max) keep_num
+    new_junk = limit_gallery_images(ql, qc, gl, gc, junk_index, KEEP_NUM)
+    junk_index = np.append(junk_index, new_junk)
+
+    # remove all images from same camera as query_camera
+    junk_index = np.append(junk_index, camera_index)
+    good_index = np.setdiff1d(good_index, junk_index, assume_unique=True)
+
     CMC_tmp = compute_mAP(index, good_index, junk_index)
     return CMC_tmp
 
@@ -96,8 +140,12 @@ def compute_mAP(index, good_index, junk_index):
 
     return ap, cmc
 
+
 ######################################################################
-result = scipy.io.loadmat('./saved_features/pytorch_result_VeRi.mat')
+if opts.use_siamese:
+    result = scipy.io.loadmat('./saved_features/result_VeRi_siamese.mat')
+else:
+    result = scipy.io.loadmat('./saved_features/pytorch_result_VeRi.mat')
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
@@ -124,8 +172,12 @@ CMC = torch.IntTensor(len(gallery_label)).zero_()
 ap = 0.0
 #print(query_label)
 for i in range(len(query_label)):
-
-    ap_tmp, CMC_tmp = evaluate(query_feature[i],query_label[i],query_cam[i],gallery_feature,gallery_label,gallery_cam)
+    if opts.use_siamese:
+        ap_tmp, CMC_tmp = evaluate_siamese(query_feature[i], query_label[i], query_cam[i],
+                                           gallery_feature, gallery_label, gallery_cam)
+    else:
+        ap_tmp, CMC_tmp = evaluate(query_feature[i], query_label[i], query_cam[i],
+                                   gallery_feature, gallery_label, gallery_cam)
     if CMC_tmp[0]==-1:
         continue
 
@@ -137,7 +189,7 @@ CMC = CMC.float()
 CMC = CMC/len(query_label) #average CMC
 print('Rank@1:%f Rank@5:%f Rank@10:%f mAP:%f'%(CMC[0],CMC[4],CMC[9],ap/len(query_label)))
 
-result = open("./results/result_not_keep_" + str(KEEP_NUM) + ".txt", "w")
+result = open("./results/result_other_cams" + str(KEEP_NUM) + ".txt", "w")
 result.write('Rank@1:%f Rank@5:%f Rank@10:%f mAP:%f'%(CMC[0],CMC[4],CMC[9],ap/len(query_label)))
 result.close()
 

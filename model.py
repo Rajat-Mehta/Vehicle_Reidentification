@@ -65,40 +65,38 @@ class ClassBlock(nn.Module):
 
 # Siamese network
 class SiameseNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, class_num, droprate=0.5, stride=2):
         super(SiameseNetwork, self).__init__()
-        self.cnn1 = nn.Sequential(
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(3, 4, kernel_size=3),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(4),
+        model_ft = models.resnet50(pretrained=True)
+        # avg pooling to global pooling
+        if stride == 1:
+            model_ft.layer4[0].downsample[0].stride = (1, 1)
+            model_ft.layer4[0].conv2.stride = (1, 1)
+        model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.model = model_ft
+        self.classifier = ClassBlock(2048, class_num, droprate)
 
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(4, 8, kernel_size=3),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(8),
+    def forward_once(self, x):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        x = self.model.layer4(x)
+        x = self.model.avgpool(x)
+        x = x.view(x.size(0), x.size(1))
+        x = self.classifier(x)
+        return x
 
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(8, 8, kernel_size=3),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(8),
-
-        )
-
-        self.fc1 = nn.Sequential(
-            nn.Linear(8 * 100 * 100, 500),
-            nn.ReLU(inplace=True),
-
-            nn.Linear(500, 500),
-            nn.ReLU(inplace=True),
-
-            nn.Linear(500, 100))
-
+    """
     def forward_once(self, x):
         output = self.cnn1(x)
         output = output.view(output.size()[0], -1)
         output = self.fc1(output)
         return output
+    """
 
     def forward(self, input1, input2):
         output1 = self.forward_once(input1)
@@ -273,6 +271,7 @@ class PCB(nn.Module):
         for i in range(self.part):
             y.append(predict[i])
         return y
+
 
 class PCB_test(nn.Module):
     def __init__(self,model):
