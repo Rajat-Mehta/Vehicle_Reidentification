@@ -18,3 +18,5 @@ model/ft_ResNet/net*
 results/*
 
 saved_features/result_VeRi_siamese\.mat
+
+deep-person-reid/*
