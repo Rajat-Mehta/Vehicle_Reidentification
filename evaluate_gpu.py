@@ -9,10 +9,10 @@ import torch.nn.functional as F
 
 parser = argparse.ArgumentParser(description='Evaluate')
 parser.add_argument('--use_siamese',  action='store_true', help='evaluate siamese or not')
-parser.add_argument('--KEEP_NUM',  default=5, help='how many images to keep from other cameras')
+parser.add_argument('--keep_num',  default=5, help='how many images to keep from other cameras')
 
 opts = parser.parse_args()
-KEEP_NUM = int(opts.KEEP_NUM)
+KEEP_NUM = int(opts.keep_num)
 # Evaluate
 def evaluate(qf,ql,qc,gf,gl,gc):
     query = qf.view(-1,1)
@@ -127,7 +127,7 @@ def compute_mAP(index, good_index, junk_index):
     rows_good = rows_good.flatten()
 
     # CONFUSION
-    cmc[rows_good] = 1
+    cmc[rows_good[0]:] = 1
 
     for i in range(ngood):
         d_recall = 1.0/ngood

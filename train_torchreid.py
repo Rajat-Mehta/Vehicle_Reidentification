@@ -26,12 +26,17 @@ if engine == "triplet":
 else:
     sampler = 'RandomSampler'
 
+height = 160 if model_name == "hacnn" else 256
+width = 64 if model_name == "hacnn" else 128
+
 datamanager = torchreid.data.ImageDataManager(
     root='..Dataset/VeRi_with_plate/',
     sources='veri_dataset',
     random_erase=True,
     train_sampler=sampler,
-    batch_size=batch_size
+    batch_size=batch_size,
+    height=height,
+    width=width
 )
 
 model = torchreid.models.build_model(
