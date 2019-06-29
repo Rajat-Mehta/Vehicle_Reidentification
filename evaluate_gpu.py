@@ -9,11 +9,47 @@ import torch.nn.functional as F
 
 parser = argparse.ArgumentParser(description='Evaluate')
 parser.add_argument('--use_siamese',  action='store_true', help='evaluate siamese or not')
-parser.add_argument('--keep_num',  default=5, help='how many images to keep from other cameras')
+parser.add_argument('--keep_num',  default=100, help='how many images to keep from other cameras')
+parser.add_argument('--use_single_camera',  action='store_true', help='use single camera gallery images')
 
 opts = parser.parse_args()
 KEEP_NUM = int(opts.keep_num)
+gallery_size = 0
 # Evaluate
+
+if opts.use_siamese:
+    name = 'siamese'
+else:
+    name = 'ft_ResNet'
+
+
+def evaluate_single_camera(qf, ql, qc, gf, gl, gc):
+    query = qf.view(-1, 1)
+    same_camera_index = np.argwhere(gc == qc)
+    same_camera_index = same_camera_index.squeeze()
+
+    gl = gl[same_camera_index]
+    gc = gc[same_camera_index]
+    gf = gf[same_camera_index]
+
+    score = torch.mm(gf, query)
+    score = score.squeeze(1).cpu()
+    score = score.numpy()
+    # predict index
+    index = np.argsort(score)  #from small to large
+    index = index[::-1]
+    # index = index[0:2000]
+    # good index
+
+    good_index = np.argwhere(gl == ql)
+
+    junk_index1 = np.argwhere(gl==-1)
+    good_index = np.setdiff1d(good_index, junk_index1, assume_unique=True)
+
+    CMC_tmp = compute_mAP(index, good_index, junk_index1)
+    return CMC_tmp
+
+
 def evaluate(qf,ql,qc,gf,gl,gc):
     query = qf.view(-1,1)
     # print(query.shape)
@@ -54,13 +90,20 @@ def find_distance(feat1, feat2):
 def evaluate_siamese(qf, ql, qc, gf, gl, gc):
     query = qf.view(-1, 1)
     # print(query.shape)
+
+    score = torch.mm(gf, query)
+    score = score.squeeze(1).cpu()
+    score = score.numpy()
+
     qf = qf.unsqueeze_(0).repeat(len(gf), 1)
-    distance = F.pairwise_distance(qf, gf, keepdim=True)
+    distance = F.pairwise_distance(gf, qf, keepdim=True)
 
     distance = distance.squeeze(1).cpu()
     distance = distance.numpy()
+
     # predict index
     index = np.argsort(distance)  # from small to large
+    # index = index[::-1]
 
     # index = index[0:2000]
     # good index
@@ -109,9 +152,10 @@ def limit_gallery_images(ql, qc, gl, gc, junk_index, keep_num):
 
 
 def compute_mAP(index, good_index, junk_index):
+    # good_index can be seen as ground truth images for given query image
 
     ap = 0
-    cmc = torch.IntTensor(len(index)).zero_()
+    cmc = torch.IntTensor(gallery_size).zero_()
     if good_index.size==0:   # if empty
         cmc[0] = -1
         return ap,cmc
@@ -125,7 +169,7 @@ def compute_mAP(index, good_index, junk_index):
     mask = np.in1d(index, good_index)
     rows_good = np.argwhere(mask==True)
     rows_good = rows_good.flatten()
-
+    # rows_good can be considered as correct predictions out of all of the predictions
     # CONFUSION
     cmc[rows_good[0]:] = 1
 
@@ -137,15 +181,14 @@ def compute_mAP(index, good_index, junk_index):
         else:
             old_precision=1.0
         ap = ap + d_recall*(old_precision + precision)/2
-
     return ap, cmc
 
 
 ######################################################################
 if opts.use_siamese:
-    result = scipy.io.loadmat('./saved_features/result_VeRi_siamese.mat')
+    result = scipy.io.loadmat('./model/' + name + '/siamese_simple/result_VeRi_siamese.mat')
 else:
-    result = scipy.io.loadmat('./saved_features/pytorch_result_VeRi.mat')
+    result = scipy.io.loadmat('./model/' + name + '/pytorch_result_VeRi.mat')
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
@@ -153,11 +196,11 @@ gallery_feature = torch.FloatTensor(result['gallery_f'])
 gallery_cam = result['gallery_cam'][0]
 gallery_label = result['gallery_label'][0]
 
-multi = os.path.isfile('./saved_features/multi_query.mat')
+multi = os.path.isfile('./model/' + name + '/multi_query.mat')
 
 
 if multi:
-    m_result = scipy.io.loadmat('./saved_features/multi_query.mat')
+    m_result = scipy.io.loadmat('./model/' + name + '/multi_query.mat')
     mquery_feature = torch.FloatTensor(m_result['mquery_f'])
     mquery_cam = m_result['mquery_cam'][0]
     mquery_label = m_result['mquery_label'][0]
@@ -169,12 +212,15 @@ gallery_feature = gallery_feature.cuda()
 
 print(query_feature.shape)
 CMC = torch.IntTensor(len(gallery_label)).zero_()
+gallery_size = len(gallery_label)
 ap = 0.0
-#print(query_label)
 for i in range(len(query_label)):
     if opts.use_siamese:
         ap_tmp, CMC_tmp = evaluate_siamese(query_feature[i], query_label[i], query_cam[i],
                                            gallery_feature, gallery_label, gallery_cam)
+    elif opts.use_single_camera:
+        ap_tmp, CMC_tmp = evaluate_single_camera(query_feature[i], query_label[i], query_cam[i],
+                                   gallery_feature, gallery_label, gallery_cam)
     else:
         ap_tmp, CMC_tmp = evaluate(query_feature[i], query_label[i], query_cam[i],
                                    gallery_feature, gallery_label, gallery_cam)
