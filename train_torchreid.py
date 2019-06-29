@@ -7,6 +7,8 @@ parser.add_argument('--engine', default='softmax', type=str, help='which engine 
 parser.add_argument('--model_name', default='hacnn', type=str, help='which model to use for training')
 parser.add_argument('--epochs', default=60, type=int, help='number of epochs')
 parser.add_argument('--batch_size', default=32, type=int, help='batch size')
+parser.add_argument('--load_checkpoint', action='store_true', help='resume training from a checkpoint')
+
 
 
 opt = parser.parse_args()
@@ -16,6 +18,8 @@ model_name = opt.model_name
 epochs = opt.epochs
 batch_size = opt.batch_size
 save_path = base_save_path + model_name + '_' + engine + '/'
+start_epoch = 0
+checkpoint_path = './model/torchreid_models/pcb_p6_triplet/model.pth.tar-35'
 
 print(engine, model_name, epochs, batch_size, save_path)
 
@@ -51,6 +55,13 @@ optimizer = torchreid.optim.build_optimizer(
     model, optim='adam', lr=0.0003
 )
 
+if opt.load_checkpoint:
+    start_epoch = torchreid.utils.resume_from_checkpoint(
+        checkpoint_path,
+        model,
+        optimizer
+    )
+
 scheduler = torchreid.optim.build_lr_scheduler(
     optimizer,
     lr_scheduler='single_step',
@@ -70,7 +81,8 @@ elif engine == "softmax":
 model_engine.run(
     max_epoch=epochs,
     save_dir=save_path,
-    print_freq=10
+    print_freq=10,
+    start_epoch=start_epoch
 )
 
 
