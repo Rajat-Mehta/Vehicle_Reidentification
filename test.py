@@ -103,21 +103,28 @@ if len(gpu_ids)>0:
 # We will use torchvision and torch.utils.data packages for loading the
 # data.
 #
-data_transforms = transforms.Compose([
+if opt.use_siamese:
+    trans = [
+        transforms.Resize((100, 100)),
+        transforms.ToTensor()
+    ]
+else:
+    trans = [
         transforms.Resize((256,128), interpolation=3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-############### Ten Crop        
+        ############### Ten Crop
         #transforms.TenCrop(224),
         #transforms.Lambda(lambda crops: torch.stack(
-         #   [transforms.ToTensor()(crop) 
+         #   [transforms.ToTensor()(crop)
           #      for crop in crops]
            # )),
         #transforms.Lambda(lambda crops: torch.stack(
          #   [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(crop)
           #       for crop in crops]
           # ))
-])
+    ]
+data_transforms = transforms.Compose(trans)
 
 if opt.PCB:
     data_transforms = transforms.Compose([
@@ -162,7 +169,8 @@ def fliplr(img):
     img_flip = img.index_select(3,inv_idx)
     return img_flip
 
-def extract_feature(model,dataloaders):
+
+def extract_feature(model, dataloaders):
     features = torch.FloatTensor()
     count = 0
     for data in dataloaders:
@@ -198,11 +206,12 @@ def extract_feature(model,dataloaders):
         features = torch.cat((features,ff), 0)
     return features
 
+
 def get_id(img_path):
     camera_id = []
     labels = []
     for path, v in img_path:
-        #filename = path.split('/')[-1]
+        # filename = path.split('/')[-1]
         filename = os.path.basename(path)
         label = filename[0:4]
         camera = filename.split('c')[1]
@@ -214,11 +223,12 @@ def get_id(img_path):
         camera_id.append(int(camera[0:3]))
     return camera_id, labels
 
+
 gallery_path = image_datasets['gallery'].imgs
 query_path = image_datasets['query'].imgs
 
-gallery_cam,gallery_label = get_id(gallery_path)
-query_cam,query_label = get_id(query_path)
+gallery_cam, gallery_label = get_id(gallery_path)
+query_cam, query_label = get_id(query_path)
 
 
 if opt.use_siamese:
@@ -275,7 +285,7 @@ with torch.no_grad():
 # Save to Matlab for check
 result = {'gallery_f': gallery_feature.numpy(), 'gallery_label': gallery_label, 'gallery_cam': gallery_cam,
           'query_f': query_feature.numpy(), 'query_label': query_label, 'query_cam': query_cam}
-scipy.io.savemat('./saved_features/pytorch_result_VeRi.mat', result)
+scipy.io.savemat('./model/' + name + '/pytorch_result_VeRi.mat', result)
 if opt.multi:
     result = {'mquery_f': mquery_feature.numpy(), 'mquery_label': mquery_label, 'mquery_cam': mquery_cam}
-    scipy.io.savemat('./saved_features/multi_query.mat', result)
+    scipy.io.savemat('./model/' + name + '/multi_query.mat', result)
