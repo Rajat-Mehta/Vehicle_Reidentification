@@ -17,7 +17,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.nn as nn
 import time
-from random_erasing import RandomErasing
+from augmentation import RandomErasing
 
 
 try:
@@ -28,9 +28,8 @@ except ImportError: # will be 3.x series
 ######################################################################
 
 DATA_TRANSFORMS = transforms.Compose([
-        transforms.Resize((256, 128), interpolation=3),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Resize((100, 100)),
+        transforms.ToTensor()
     ])
 
 
@@ -106,15 +105,15 @@ def get_dataloader(data_transforms, batch_size):
     folder_dataset = dset.ImageFolder(root=Config.training_dir)
 
     siamese_dataset = SiameseNetworkDataset(imageFolderDataset=folder_dataset,
-                                            transform=data_transforms,
+                                            transform=transforms.Compose([transforms.Resize((100, 100)),
+                                                                          transforms.ToTensor()
+                                                                          ]),
                                             should_invert=False)
 
-    vis_dataloader = DataLoader(siamese_dataset, shuffle=True, num_workers=8, batch_size=batch_size)
-    dataiter = iter(vis_dataloader)
-
-
-    example_batch = next(dataiter)
-    concatenated = torch.cat((example_batch[0], example_batch[1]), 0)
+    # vis_dataloader = DataLoader(siamese_dataset, shuffle=True, num_workers=8, batch_size=batch_size)
+    # dataiter = iter(vis_dataloader)
+    # example_batch = next(dataiter)
+    # concatenated = torch.cat((example_batch[0], example_batch[1]), 0)
     # imshow(torchvision.utils.make_grid(concatenated))
     # print(example_batch[2].numpy())
 
@@ -139,8 +138,8 @@ def train_siamese_network(nclasses, fp16, transform, batch_size, num_epochs):
     data_transforms = transform
 
     since = time.time()
-    net = SiameseNetwork(nclasses).cuda()
-    net.classifier.classifier = nn.Sequential()
+    net = SiameseNetwork().cuda()
+    # net.classifier.classifier = nn.Sequential()
 
     print(net)
     print("Start time: ", since)
@@ -169,6 +168,7 @@ def train_siamese_network(nclasses, fp16, transform, batch_size, num_epochs):
             img0, img1, label = img0.cuda(), img1.cuda(), label.cuda()
 
             optimizer.zero_grad()
+
             output1, output2 = net(img0, img1)
 
             loss_contrastive = criterion(output1, output2, label)
@@ -201,13 +201,12 @@ def test_siamese(net):
     folder_dataset_test = dset.ImageFolder(root=Config.testing_dir)
 
     siamese_dataset = SiameseNetworkDataset(imageFolderDataset=folder_dataset_test,
-                                            transform=transforms.Compose([
-        transforms.Resize((256, 128), interpolation=3),
-        transforms.ToTensor()
-        ])
-                                            , should_invert=False)
+                                            transform=transforms.Compose([transforms.Resize((100, 100)),
+                                                                          transforms.ToTensor()
+                                                                          ]),
+                                            should_invert=False)
 
-    test_dataloader = DataLoader(siamese_dataset, num_workers=6, batch_size=16, shuffle=True)
+    test_dataloader = DataLoader(siamese_dataset, num_workers=6, batch_size=32, shuffle=True)
     dataiter = iter(test_dataloader)
     batch = next(dataiter)
     concatenated = torch.cat((batch[0], batch[1]), 0)
@@ -262,9 +261,9 @@ def get_siamese_features(gallery_cam, gallery_label, query_cam, query_label, ncl
 
 def get_siamese_model(nclasses):
     device = torch.device("cuda")
-    model = SiameseNetwork(nclasses)
-    model.classifier.classifier = nn.Sequential()
-    checkpoint = torch.load('./model/siamese/net_29.pth')
+    model = SiameseNetwork()
+    # model.classifier.classifier = nn.Sequential()
+    checkpoint = torch.load('./model/siamese/net_59.pth')
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()
