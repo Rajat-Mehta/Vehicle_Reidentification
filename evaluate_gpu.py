@@ -87,6 +87,38 @@ def find_distance(feat1, feat2):
     return F.pairwise_distance(feat1, feat2, keepdim=True)
 
 
+def evaluate_siamese_single_camera(qf, ql, qc, gf, gl, gc):
+    query = qf.view(-1, 1)
+    same_camera_index = np.argwhere(gc == qc)
+    same_camera_index = same_camera_index.squeeze()
+
+    gl = gl[same_camera_index]
+    gc = gc[same_camera_index]
+    gf = gf[same_camera_index]
+
+    score = torch.mm(gf, query)
+    score = score.squeeze(1).cpu()
+    score = score.numpy()
+
+    qf = qf.unsqueeze_(0).repeat(len(gf), 1)
+    distance = F.pairwise_distance(gf, qf, keepdim=True)
+
+    distance = distance.squeeze(1).cpu()
+    distance = distance.numpy()
+
+    index = np.argsort(distance)  # from small to large
+
+    # good index
+
+    good_index = np.argwhere(gl == ql)
+
+    junk_index1 = np.argwhere(gl==-1)
+    good_index = np.setdiff1d(good_index, junk_index1, assume_unique=True)
+
+    CMC_tmp = compute_mAP(index, good_index, junk_index1)
+    return CMC_tmp
+
+
 def evaluate_siamese(qf, ql, qc, gf, gl, gc):
     query = qf.view(-1, 1)
     # print(query.shape)
@@ -215,12 +247,18 @@ CMC = torch.IntTensor(len(gallery_label)).zero_()
 gallery_size = len(gallery_label)
 ap = 0.0
 for i in range(len(query_label)):
-    if opts.use_siamese:
+    if opts.use_single_camera and opts.use_siamese:
+        ap_tmp, CMC_tmp = evaluate_siamese_single_camera(query_feature[i], query_label[i], query_cam[i],
+                                                         gallery_feature, gallery_label, gallery_cam)
+
+    elif opts.use_siamese:
         ap_tmp, CMC_tmp = evaluate_siamese(query_feature[i], query_label[i], query_cam[i],
                                            gallery_feature, gallery_label, gallery_cam)
     elif opts.use_single_camera:
         ap_tmp, CMC_tmp = evaluate_single_camera(query_feature[i], query_label[i], query_cam[i],
                                    gallery_feature, gallery_label, gallery_cam)
+
+
     else:
         ap_tmp, CMC_tmp = evaluate(query_feature[i], query_label[i], query_cam[i],
                                    gallery_feature, gallery_label, gallery_cam)
