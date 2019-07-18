@@ -24,6 +24,7 @@ import yaml
 import math
 from shutil import copyfile
 from train_and_test_siamese import *
+from utils import update_average, get_model_list, load_network, save_network, make_weights_for_balanced_classes
 
 
 version =  torch.__version__
@@ -58,6 +59,11 @@ parser.add_argument('--PCB', action='store_true', help='use PCB+ResNet50')
 parser.add_argument('--warm_epoch', default=0, type=int, help='the first K epoch that needs warm up')
 parser.add_argument('--lr', default=0.05, type=float, help='learning rate')
 parser.add_argument('--droprate', default=0.5, type=float, help='drop rate')
+parser.add_argument('--resume', action='store_true', help='resume training')
+parser.add_argument('--h', default=256, type=int, help='height')
+parser.add_argument('--w', default=128, type=int, help='width')
+parser.add_argument('--pool', default='avg', type=str, help='pool avg')
+
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory' )
 opt = parser.parse_args()
 
@@ -67,6 +73,7 @@ data_dir = opt.data_dir
 if opt.use_dense is False and opt.use_siamese is False and opt.use_NAS is False and opt.use_ftnet is False:
     print("No model selected. Please select at least one model to train like: use_ftnet or use_siamese")
     exit()
+
 
 if opt.use_dense:
     name = "ft_net_dense"
@@ -79,6 +86,15 @@ elif opt.PCB:
 elif opt.use_ftnet:
     name = "ft_ResNet"
 
+opt.name = name
+
+
+if opt.resume:
+    print("Resuming training from presaved model. ")
+    model, opt, start_epoch = load_network(name, opt)
+    start_epoch += 1
+else:
+    start_epoch = 0
 
 str_ids = opt.gpu_ids.split(',')
 gpu_ids = []
@@ -99,9 +115,9 @@ transform_train_list = []
 
 # transform_train_list = transform_train_list + [# transforms.RandomResizedCrop(size=128, scale=(0.75,1.0),
 # ratio=(0.75,1.3333), interpolation=3), #Image.BICUBIC)]
-transform_train_list = transform_train_list + [transforms.Resize((256, 128), interpolation=3)]
+transform_train_list = transform_train_list + [transforms.Resize((opt.h, opt.w), interpolation=3)]
 # transform_train_list = transform_train_list + [transforms.Pad(10)]
-# transform_train_list = transform_train_list + [transforms.RandomCrop((256,128))]
+# transform_train_list = transform_train_list + [transforms.RandomCrop((opt.h, opt.w))]
 
 if opt.flip:
     transform_train_list = transform_train_list + [transforms.RandomHorizontalFlip(p=opt.flip)]
@@ -126,29 +142,30 @@ transform_train_list = transform_train_list + [transforms.Normalize([0.485, 0.45
 
 
 transform_val_list = [
-        transforms.Resize(size=(256,128),interpolation=3), #Image.BICUBIC
+        transforms.Resize(size=(opt.h, opt.w), interpolation=3), #Image.BICUBIC
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]
 
 if opt.PCB:
     transform_train_list = [
-        transforms.Resize((384,192), interpolation=3),
+        transforms.Resize((384, 192), interpolation=3),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]
     transform_val_list = [
-        transforms.Resize(size=(384,192),interpolation=3), #Image.BICUBIC
+        transforms.Resize(size=(384, 192), interpolation=3),  # Image.BICUBIC
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]
 
-if opt.erasing_p>0:
+if opt.erasing_p > 0:
     transform_train_list = transform_train_list + [RandomErasing(probability = opt.erasing_p, mean=[0.0, 0.0, 0.0])]
 
 if opt.color_jitter:
-    transform_train_list = [transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0)] + transform_train_list
+    transform_train_list = [transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0)] + \
+                           transform_train_list
 
 print(transform_train_list)
 data_transforms = {
@@ -266,10 +283,11 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
     # best_model_wts = model.state_dict()
     # best_acc = 0.0
-    warm_up = 0.1 # We start from the 0.1*lrRate
-    warm_iteration = round(dataset_sizes['train']/opt.batchsize)*opt.warm_epoch # first 5 epoch
+    warm_up = 0.1  # We start from the 0.1*lrRate
+    warm_iteration = round(dataset_sizes['train'] / opt.batchsize) * opt.warm_epoch  # first 5 epoch
 
-    for epoch in range(num_epochs):
+    for epoch in range(num_epochs - start_epoch):
+        epoch = epoch + start_epoch
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
 
@@ -287,20 +305,14 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             for data in dataloaders[phase]:
                 # get the inputs
                 inputs, labels = data
-                now_batch_size,c,h,w = inputs.shape
-                if now_batch_size<opt.batchsize: # skip the last batch
+                now_batch_size, c, h, w = inputs.shape
+                if now_batch_size < opt.batchsize:  # skip the last batch
                     continue
-                # print(inputs.shape)
-                # wrap them in Variable
                 if use_gpu:
                     inputs = Variable(inputs.cuda().detach())
                     labels = Variable(labels.cuda().detach())
                 else:
                     inputs, labels = Variable(inputs), Variable(labels)
-
-                # if we use low precision, input also need to be fp16
-                #if fp16:
-                #    inputs = inputs.half()
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
@@ -326,26 +338,27 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                     _, preds = torch.max(score.data, 1)
 
                     loss = criterion(part[0], labels)
-                    for i in range(num_part-1):
-                        loss += criterion(part[i+1], labels)
+                    for i in range(num_part - 1):
+                        loss += criterion(part[i + 1], labels)
 
                 # backward + optimize only if in training phase
-                if epoch<opt.warm_epoch and phase == 'train':
+                if epoch < opt.warm_epoch and phase == 'train':
                     warm_up = min(1.0, warm_up + 0.9 / warm_iteration)
                     loss *= warm_up
 
                 if phase == 'train':
-                    if fp16: # we use optimier to backward loss
+                    if fp16:  # we use optimier to backward loss
                         with amp.scale_loss(loss, optimizer) as scaled_loss:
                             scaled_loss.backward()
                     else:
                         loss.backward()
                     optimizer.step()
+                    ##########
 
                 # statistics
-                if int(version[0])>0 or int(version[2]) > 3:  # for the new version like 0.4.0, 0.5.0 and 1.0.0
+                if int(version[0]) > 0 or int(version[2]) > 3:  # for the new version like 0.4.0, 0.5.0 and 1.0.0
                     running_loss += loss.item() * now_batch_size
-                else :  # for the old version like 0.3.0 and 0.3.1
+                else:  # for the old version like 0.3.0 and 0.3.1
                     running_loss += loss.data[0] * now_batch_size
                 running_corrects += float(torch.sum(preds == labels.data))
 
@@ -356,11 +369,11 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 phase, epoch_loss, epoch_acc))
 
             y_loss[phase].append(epoch_loss)
-            y_err[phase].append(1.0-epoch_acc)
+            y_err[phase].append(1.0 - epoch_acc)
             # deep copy the model
             if phase == 'val':
                 last_model_wts = model.state_dict()
-                if epoch%10 == 9:
+                if epoch % 10 == 9:
                     save_network(model, epoch)
                 draw_curve(epoch)
 
@@ -372,11 +385,10 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
-    #print('Best val Acc: {:4f}'.format(best_acc))
-
-    # load best model weights
+    # print('Best val Acc: {:4f}'.format(best_acc))
     model.load_state_dict(last_model_wts)
     save_network(model, 'last')
+
     return model
 
 
@@ -406,8 +418,12 @@ def draw_curve(current_epoch):
 
 
 def save_network(network, epoch_label):
-    save_filename = 'net_%s.pth'% epoch_label
-    save_path = os.path.join('./model',name,save_filename)
+    if isinstance(epoch_label, int):
+        save_filename = 'net_%03d.pth'% epoch_label
+    else:
+        save_filename = 'net_%s.pth'% epoch_label
+
+    save_path = os.path.join('./model', name, save_filename)
     torch.save(network.cpu().state_dict(), save_path)
     if torch.cuda.is_available():
         network.cuda(gpu_ids[0])
@@ -420,6 +436,8 @@ def save_train_config_files():
     # record every run
     copyfile('./train.py', dir_name + '/train.py')
     copyfile('./model.py', dir_name + '/model.py')
+    copyfile('./augmentation.py', dir_name + '/augmentation.py')
+
     if opt.use_siamese:
         copyfile('./train_and_test_siamese.py', dir_name + '/train_and_test_siamese.py')
 
@@ -435,15 +453,16 @@ def save_train_config_files():
 #
 
 
-if opt.use_dense:
-    model = ft_net_dense(len(class_names), opt.droprate)
-elif opt.use_NAS:
-    model = ft_net_NAS(len(class_names), opt.droprate)
-else:
-    model = ft_net(len(class_names), opt.droprate, opt.stride)
+if not opt.resume:
+    if opt.use_dense:
+        model = ft_net_dense(len(class_names), opt.droprate)
+    elif opt.use_NAS:
+        model = ft_net_NAS(len(class_names), opt.droprate)
+    else:
+        model = ft_net(len(class_names), opt.droprate, opt.stride)
 
-if opt.PCB:
-    model = PCB(len(class_names))
+    if opt.PCB:
+        model = PCB(len(class_names))
 
 
 if opt.use_siamese:
@@ -453,8 +472,10 @@ if opt.use_siamese:
 
 
 opt.nclasses = len(class_names)
-
 print(model)
+
+if start_epoch >= 40:
+    opt.lr = opt.lr*0.1
 
 if not opt.PCB:
     ignored_params = list(map(id, model.classifier.parameters() ))
