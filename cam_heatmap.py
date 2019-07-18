@@ -1,3 +1,4 @@
+import cv2
 import os
 import matplotlib
 matplotlib.use('agg')
@@ -43,10 +44,15 @@ else:
 
 
 def heatmap2d(img, arr):
+    #print("inside h2d")
     fig = plt.figure()
     ax0 = fig.add_subplot(121, title="Image")
     ax1 = fig.add_subplot(122, title="Heatmap")
     img = img.permute(1, 2, 0)
+    #gray_img = cv2.cvtColor(np.float32(img), cv2.COLOR_BGR2GRAY)
+    #fin = cv2.addWeighted(np.float32(arr), 0.7, gray_img, 0.3, 0)
+    #print(fin)
+    #exit()
     ax0.imshow(img)
     heatmap = ax1.imshow(arr, cmap='jet')
     fig.colorbar(heatmap)
