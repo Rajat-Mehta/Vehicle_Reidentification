@@ -7,15 +7,18 @@ from torchvision import datasets
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
+
 #######################################################################
 # Evaluate
 parser = argparse.ArgumentParser(description='Demo')
 parser.add_argument('--query_index', default=777, type=int, help='test_image_index')
-parser.add_argument('--test_dir',default='../Datasets/VeRi_with_plate/pytorch',type=str, help='./test_data')
+parser.add_argument('--use_siamese', action='store_true', help='use siamese')
+parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch',type=str, help='./test_data')
 opts = parser.parse_args()
 
 data_dir = opts.test_dir
-image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ) for x in ['gallery','query']}
+image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir, x) ) for x in ['gallery','query']}
 
 #####################################################################
 #Show result
@@ -28,7 +31,10 @@ def imshow(path, title=None):
     plt.pause(0.001)  # pause a bit so that plots are updated
 
 ######################################################################
-result = scipy.io.loadmat('pytorch_result_VeRi.mat')
+if opts.use_siamese:
+    result = scipy.io.loadmat('./saved_features/result_VeRi_siamese.mat')
+else:
+    result = scipy.io.loadmat('./model/ft_ResNet/pytorch_result_VeRi.mat')
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
@@ -48,19 +54,30 @@ if multi:
 query_feature = query_feature.cuda()
 gallery_feature = gallery_feature.cuda()
 
+def get_index(gf, query, qf):
+    if opts.use_siamese:
+        qf = qf.unsqueeze_(0).repeat(len(gf), 1)
+        distance = F.pairwise_distance(qf, gf, keepdim=True)
+        distance = distance.squeeze(1).cpu()
+        distance = distance.numpy()
+        # predict index
+        index = np.argsort(distance)  # from small to large
+    else:
+        score = torch.mm(gf, query)
+        score = score.squeeze(1).cpu()
+        score = score.numpy()
+        # predict index
+        index = np.argsort(score)  # from small to large
+        index = index[::-1]
+        # index = index[0:2000]
+        # good index
+    return index
 #######################################################################
 # sort the images
 def sort_img(qf, ql, qc, gf, gl, gc):
     query = qf.view(-1,1)
     # print(query.shape)
-    score = torch.mm(gf,query)
-    score = score.squeeze(1).cpu()
-    score = score.numpy()
-    # predict index
-    index = np.argsort(score)  #from small to large
-    index = index[::-1]
-    # index = index[0:2000]
-    # good index
+    index = get_index(gf, query, qf)
     query_index = np.argwhere(gl==ql)
     #same camera
     camera_index = np.argwhere(gc==qc)
@@ -83,16 +100,16 @@ index = sort_img(query_feature[i],query_label[i],query_cam[i],gallery_feature,ga
 
 query_path, _ = image_datasets['query'].imgs[i]
 query_label = query_label[i]
-print(query_path)
+print("Query label: ", query_label)
 print('Top 10 images are as follow:')
-try: # Visualize Ranking Result 
+try:  # Visualize Ranking Result
     # Graphical User Interface is needed
     fig = plt.figure(figsize=(16,4))
     ax = plt.subplot(1,11,1)
     ax.axis('off')
     imshow(query_path,'query')
     for i in range(10):
-        ax = plt.subplot(1,11,i+2)
+        ax = plt.subplot(1, 11, i+2)
         ax.axis('off')
         img_path, _ = image_datasets['gallery'].imgs[index[i]]
         label = gallery_label[index[i]]

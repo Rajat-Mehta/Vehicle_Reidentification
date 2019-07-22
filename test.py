@@ -17,6 +17,7 @@ import os
 import scipy.io
 import yaml
 from model import ft_net, ft_net_dense, ft_net_NAS, PCB, PCB_test
+from train_and_test_siamese import *
 
 #fp16
 try:
@@ -28,36 +29,60 @@ except ImportError: # will be 3.x series
 # --------
 
 parser = argparse.ArgumentParser(description='Training')
-parser.add_argument('--gpu_ids',default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
-parser.add_argument('--which_epoch',default='29', type=str, help='0,1,2,3...or last')
-parser.add_argument('--test_dir',default='../Datasets/VeRi_with_plate/pytorch',type=str, help='./test_data')
-parser.add_argument('--name', default='ft_ResNet50_VeRi', type=str, help='save model path')
+parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+parser.add_argument('--which_epoch', default='59', type=str, help='0,1,2,3...or last')
+parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
+parser.add_argument('--name', type=str, help='save model path')
 parser.add_argument('--batchsize', default=256, type=int, help='batchsize')
-parser.add_argument('--use_dense', action='store_true', help='use densenet121' )
-parser.add_argument('--PCB', action='store_true', help='use PCB' )
-parser.add_argument('--multi', action='store_true', help='use multiple query' )
-parser.add_argument('--fp16', action='store_true', help='use fp16.' )
+parser.add_argument('--use_dense', action='store_true', help='use densenet121')
+parser.add_argument('--PCB', action='store_true', help='use PCB')
+parser.add_argument('--use_siamese', action='store_true', help='use siamese')
+parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
+parser.add_argument('--multi', action='store_true', help='use multiple query')
+parser.add_argument('--fp16', action='store_true', help='use fp16.')
 
 opt = parser.parse_args()
-###load config###
+### load config ###
 # load the training config
-config_path = os.path.join('./model',opt.name,'opts.yaml')
-with open(config_path, 'r') as stream:
-        config = yaml.load(stream)
-opt.fp16 = config['fp16'] 
-opt.PCB = config['PCB']
-opt.use_dense = config['use_dense']
-opt.use_NAS = config['use_NAS']
-opt.stride = config['stride']
 
-if 'nclasses' in config: # tp compatible with old config files
-    opt.nclasses = config['nclasses']
-else: 
-    opt.nclasses = 751 
+if opt.use_ftnet is False and opt.use_siamese is False:
+    print("No model selected. Please select at least one model: use_ftnet or use_siamese")
+    exit()
+
+if opt.use_ftnet:
+    name = "ft_ResNet"
+elif opt.use_siamese:
+    name = "siamese"
+
+opt.nclasses = 575
+
+
+config_path = os.path.join('./model', name, 'opts.yaml')
+if os.path.isfile(config_path):
+    with open(config_path, 'r') as stream:
+            config = yaml.load(stream)
+    opt.fp16 = config['fp16']
+    opt.PCB = config['PCB']
+    opt.use_dense = config['use_dense']
+    opt.use_ftnet = config['use_ftnet']
+    opt.use_NAS = config['use_NAS']
+    opt.stride = config['stride']
+    opt.use_siamese = config['use_siamese']
+
+    if 'nclasses' in config:  # tp compatible with old config files
+        opt.nclasses = config['nclasses']
+    else:
+        opt.nclasses = 575
+
+print("Model name: ", name)
+print("Epoch: ", opt.which_epoch)
+print("Use_siamese: ", opt.use_siamese)
+print("Use_ftnet: ", opt.use_ftnet)
+print("nclasses: ", opt.nclasses)
+
 
 str_ids = opt.gpu_ids.split(',')
-#which_epoch = opt.which_epoch
-name = opt.name
+# which_epoch = opt.which_epoch
 test_dir = opt.test_dir
 
 gpu_ids = []
@@ -78,21 +103,28 @@ if len(gpu_ids)>0:
 # We will use torchvision and torch.utils.data packages for loading the
 # data.
 #
-data_transforms = transforms.Compose([
+if opt.use_siamese:
+    trans = [
+        transforms.Resize((100, 100)),
+        transforms.ToTensor()
+    ]
+else:
+    trans = [
         transforms.Resize((256,128), interpolation=3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-############### Ten Crop        
+        ############### Ten Crop
         #transforms.TenCrop(224),
         #transforms.Lambda(lambda crops: torch.stack(
-         #   [transforms.ToTensor()(crop) 
+         #   [transforms.ToTensor()(crop)
           #      for crop in crops]
            # )),
         #transforms.Lambda(lambda crops: torch.stack(
          #   [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(crop)
           #       for crop in crops]
           # ))
-])
+    ]
+data_transforms = transforms.Compose(trans)
 
 if opt.PCB:
     data_transforms = transforms.Compose([
@@ -120,7 +152,7 @@ use_gpu = torch.cuda.is_available()
 # Load model
 #---------------------------
 def load_network(network):
-    save_path = os.path.join('./model',name,'net_%s.pth'%opt.which_epoch)
+    save_path = os.path.join('./model', name, 'net_%03d.pth'%int(opt.which_epoch))
     network.load_state_dict(torch.load(save_path))
     return network
 
@@ -137,7 +169,8 @@ def fliplr(img):
     img_flip = img.index_select(3,inv_idx)
     return img_flip
 
-def extract_feature(model,dataloaders):
+
+def extract_feature(model, dataloaders):
     features = torch.FloatTensor()
     count = 0
     for data in dataloaders:
@@ -173,11 +206,12 @@ def extract_feature(model,dataloaders):
         features = torch.cat((features,ff), 0)
     return features
 
+
 def get_id(img_path):
     camera_id = []
     labels = []
     for path, v in img_path:
-        #filename = path.split('/')[-1]
+        # filename = path.split('/')[-1]
         filename = os.path.basename(path)
         label = filename[0:4]
         camera = filename.split('c')[1]
@@ -189,11 +223,16 @@ def get_id(img_path):
         camera_id.append(int(camera[0:3]))
     return camera_id, labels
 
+
 gallery_path = image_datasets['gallery'].imgs
 query_path = image_datasets['query'].imgs
 
-gallery_cam,gallery_label = get_id(gallery_path)
-query_cam,query_label = get_id(query_path)
+gallery_cam, gallery_label = get_id(gallery_path)
+query_cam, query_label = get_id(query_path)
+
+
+if opt.use_siamese:
+    get_siamese_features(gallery_cam, gallery_label, query_cam, query_label, opt.nclasses)
 
 
 if opt.multi:
@@ -207,8 +246,8 @@ if opt.use_dense:
     model_structure = ft_net_dense(opt.nclasses)
 elif opt.use_NAS:
     model_structure = ft_net_NAS(opt.nclasses)
-else:
-    model_structure = ft_net(opt.nclasses, stride = opt.stride)
+elif opt.use_ftnet:
+    model_structure = ft_net(opt.nclasses, stride=opt.stride)
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses)
@@ -238,14 +277,15 @@ if use_gpu:
 
 # Extract feature
 with torch.no_grad():
-    gallery_feature = extract_feature(model,dataloaders['gallery'])
-    query_feature = extract_feature(model,dataloaders['query'])
+    gallery_feature = extract_feature(model, dataloaders['gallery'])
+    query_feature = extract_feature(model, dataloaders['query'])
     if opt.multi:
-        mquery_feature = extract_feature(model,dataloaders['multi-query'])
+        mquery_feature = extract_feature(model, dataloaders['multi-query'])
     
 # Save to Matlab for check
-result = {'gallery_f':gallery_feature.numpy(),'gallery_label':gallery_label,'gallery_cam':gallery_cam,'query_f':query_feature.numpy(),'query_label':query_label,'query_cam':query_cam}
-scipy.io.savemat('pytorch_result_VeRi.mat',result)
+result = {'gallery_f': gallery_feature.numpy(), 'gallery_label': gallery_label, 'gallery_cam': gallery_cam,
+          'query_f': query_feature.numpy(), 'query_label': query_label, 'query_cam': query_cam}
+scipy.io.savemat('./model/' + name + '/pytorch_result_VeRi.mat', result)
 if opt.multi:
-    result = {'mquery_f':mquery_feature.numpy(),'mquery_label':mquery_label,'mquery_cam':mquery_cam}
-    scipy.io.savemat('multi_query.mat',result)
+    result = {'mquery_f': mquery_feature.numpy(), 'mquery_label': mquery_label, 'mquery_cam': mquery_cam}
+    scipy.io.savemat('./model/' + name + '/multi_query.mat', result)
