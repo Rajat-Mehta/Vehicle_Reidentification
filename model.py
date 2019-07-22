@@ -4,7 +4,7 @@ from torch.nn import init
 from torchvision import models
 from torch.autograd import Variable
 import pretrainedmodels
-
+import torch.nn.functional as F
 ######################################################################
 def weights_init_kaiming(m):
     classname = m.__class__.__name__

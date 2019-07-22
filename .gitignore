@@ -19,3 +19,5 @@ model/*
 network_attention/*
 
 show\.png
+
+Person-reID-triplet-loss/*

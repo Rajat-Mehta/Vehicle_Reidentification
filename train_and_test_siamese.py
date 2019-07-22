@@ -135,8 +135,6 @@ def save_model(epoch, model, loss, optimizer):
 
 
 def train_siamese_network(nclasses, fp16, transform, batch_size, num_epochs):
-    data_transforms = transform
-
     since = time.time()
     net = SiameseNetwork().cuda()
     # net.classifier.classifier = nn.Sequential()
@@ -156,7 +154,7 @@ def train_siamese_network(nclasses, fp16, transform, batch_size, num_epochs):
     counter = []
     loss_history = []
     iteration_number = 0
-    train_dataloader = get_dataloader(data_transforms, batch_size)
+    train_dataloader = get_dataloader(transform, batch_size)
     print("Started training siamese network")
 
     for epoch in range(0, num_epochs):
