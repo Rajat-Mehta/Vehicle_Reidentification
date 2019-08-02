@@ -55,8 +55,10 @@ class ClassBlock(nn.Module):
         x = self.add_block(x)
         if self.return_f:
             f = x
-            x = self.classifier(x)
-            return x,f
+            f_norm = f.norm(p=2, dim=1, keepdim=True) + 1e-8
+            f = f.div(f_norm)
+            x = self.classifier(f)
+            return x, f
         else:
             x = self.classifier(x)
             return x
@@ -174,7 +176,7 @@ class ContrastiveLoss(torch.nn.Module):
 # Define the ResNet50-based Model
 class ft_net(nn.Module):
 
-    def __init__(self, class_num, droprate=0.5, stride=2, init_model=None, pool='avg'):
+    def __init__(self, class_num, droprate=0.5, stride=2, init_model=None, pool='avg', return_f=False):
         super(ft_net, self).__init__()
         model_ft = models.resnet50(pretrained=True)
         # avg pooling to global pooling
@@ -191,7 +193,7 @@ class ft_net(nn.Module):
         elif pool == 'avg':
             model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.model = model_ft
-            self.classifier = ClassBlock(2048, class_num, droprate)
+            self.classifier = ClassBlock(2048, class_num, droprate, return_f=return_f)
 
         if init_model != None:
             self.model = init_model.model
