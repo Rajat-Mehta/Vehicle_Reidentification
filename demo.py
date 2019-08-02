@@ -32,7 +32,7 @@ def imshow(path, title=None):
 
 ######################################################################
 if opts.use_siamese:
-    result = scipy.io.loadmat('./saved_features/result_VeRi_siamese.mat')
+    result = scipy.io.loadmat('./model/siamese/pytorch_result_VeRi.mat')
 else:
     result = scipy.io.loadmat('./model/ft_ResNet/pytorch_result_VeRi.mat')
 query_feature = torch.FloatTensor(result['query_f'])
