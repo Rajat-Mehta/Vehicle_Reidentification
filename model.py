@@ -24,6 +24,62 @@ def weights_init_classifier(m):
         init.normal_(m.weight.data, std=0.001)
         init.constant_(m.bias.data, 0.0)
 
+
+class ClassBlock_Siamese(nn.Module):
+    def __init__(self, input_dim, class_num, dropout=False, relu=False, num_bottleneck=512):
+        super(ClassBlock_Siamese, self).__init__()
+        add_block = []
+        #add_block += [nn.Linear(input_dim, num_bottleneck)]
+        num_bottleneck=input_dim
+        add_block += [nn.BatchNorm1d(num_bottleneck)]
+        if relu:
+            add_block += [nn.LeakyReLU(0.1)]
+        if dropout:
+            add_block += [nn.Dropout(p=0.5)]
+        add_block = nn.Sequential(*add_block)
+        add_block.apply(weights_init_kaiming)
+
+        classifier = []
+        classifier += [nn.Linear(num_bottleneck, class_num)]
+        classifier = nn.Sequential(*classifier)
+        classifier.apply(weights_init_classifier)
+
+        self.add_block = add_block
+        self.classifier = classifier
+    def forward(self, x):
+        f = self.add_block(x)
+        f_norm = f.norm(p=2, dim=1, keepdim=True) + 1e-8
+        f = f.div(f_norm)
+        x = self.classifier(f)
+        return x,f
+
+# Define the ResNet50-based Model
+class ft_net_siamese(nn.Module):
+
+    def __init__(self, class_num ):
+        super(ft_net_siamese, self).__init__()
+        model_ft = models.resnet50(pretrained=True)
+        # avg pooling to global pooling
+        model_ft.avgpool = nn.AdaptiveAvgPool2d((1,1))
+        self.model = model_ft
+        self.classifier = ClassBlock_Siamese(2048, class_num, dropout=False, relu=False)
+        # remove the final downsample
+        # self.model.layer4[0].downsample[0].stride = (1,1)
+        # self.model.layer4[0].conv2.stride = (1,1)
+    def forward(self, x):
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+        x = self.model.layer1(x)
+        x = self.model.layer2(x)
+        x = self.model.layer3(x)
+        x = self.model.layer4(x)
+        x = self.model.avgpool(x)
+        x = torch.squeeze(x)
+        x,f = self.classifier(x)
+        return x,f
+
 # Defines the new fc layer and classification layer
 # |--Linear--|--bn--|--relu--|--Linear--|
 class ClassBlock(nn.Module):
