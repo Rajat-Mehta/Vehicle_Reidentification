@@ -218,7 +218,7 @@ def compute_mAP(index, good_index, junk_index):
 
 ######################################################################
 if opts.use_siamese:
-    result = scipy.io.loadmat('./model/' + name + '/result_VeRi_siamese.mat')
+    result = scipy.io.loadmat('./model/' + name + '/pytorch_result_VeRi.mat')
 else:
     result = scipy.io.loadmat('./model/' + name + '/pytorch_result_VeRi.mat')
 query_feature = torch.FloatTensor(result['query_f'])
@@ -243,6 +243,8 @@ gallery_feature = gallery_feature.cuda()
 
 
 print(query_feature.shape)
+print(gallery_feature.shape)
+
 CMC = torch.IntTensor(len(gallery_label)).zero_()
 gallery_size = len(gallery_label)
 ap = 0.0

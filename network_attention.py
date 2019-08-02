@@ -6,7 +6,7 @@ import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from model import ft_net, ft_net_dense, ft_net_NAS, PCB, PCB_test
+from model import ft_net, ft_net_dense, ft_net_NAS, PCB, PCB_test, ft_net_siamese
 import scipy.io
 import yaml
 import argparse
@@ -25,6 +25,8 @@ parser_na.add_argument('--name', default='ft_ResNet', type=str, help='save model
 parser_na.add_argument('--batchsize', default=512, type=int, help='batchsize')
 parser_na.add_argument('--query_index', default=800, type=int, help='test_image_index')
 parser_na.add_argument('--acc', action='store_true', help='heatmap')
+parser_na.add_argument('--hr', action='store_true', help='generate high resolution accuracy heatmaps or not')
+parser_na.add_argument('--which_epoch', default='69', type=str, help='0,1,2,3...or last')
 
 
 opts = parser_na.parse_args()
@@ -37,8 +39,6 @@ with open(config_path, 'r') as stream:
 opts.fp16 = config['fp16']
 opts.PCB = config['PCB']
 opts.use_dense = config['use_dense']
-opts.use_NAS = config['use_NAS']
-opts.stride = config['stride']
 
 opts.h = 256
 opts.w = 128
@@ -71,16 +71,23 @@ def generate_heatmap(model, query):
 
 
 def get_model():
-    model = ft_net(class_num=575)
-    model.load_state_dict(torch.load('./model/ft_ResNet/net_99.pth'))
-    model.classifier.classifier = nn.Sequential()
+    filename = 'net_%03d.pth' % int(opts.which_epoch)
+
+    if opts.name == 'siamese':
+        model = ft_net(class_num=575, return_f=True)
+        model.load_state_dict(torch.load('./model/' + opts.name + '/' + filename))
+    else:
+        model = ft_net(class_num=575)
+        model.load_state_dict(torch.load('./model/' + opts.name + '/' + filename))
+        model.classifier.classifier = nn.Sequential()
+
     model = model.eval().cuda()
 
     return model
 
 
 def load_features():
-    result = scipy.io.loadmat('./model/' + opts.name + '/pytorch_result_VeRi_99.mat')
+    result = scipy.io.loadmat('./model/' + opts.name + '/pytorch_result_VeRi.mat')
     query_feature = torch.FloatTensor(result['query_f'])
     query_cam = result['query_cam'][0]
     query_label = result['query_label'][0]
@@ -186,7 +193,9 @@ def evaluate(model, query_img, query_vis, j, img_num, query_orig, heatmap_orig):
             img_path = image_datasets.imgs[index[i]]
             print(img_path[0])
         print('If you want to see the visualization of the ranking result, graphical user interface is needed.')
-    directory = './network_attention/' + str(j) + '/'
+    # directory = './network_attention/' + str(j) + '/'
+    directory = './network_attention/' + opts.name + '_' + str(j) + '/'
+
     if not os.path.exists(directory):
         os.makedirs(directory)
     fig.savefig(directory + str(img_num).zfill(3) + ".png")
@@ -202,6 +211,9 @@ def save_fig(query, size, i):
 def random_erase(query, sizes):
     aug_query = []
     i=0
+    inc = 8
+    if opts.hr:
+        inc = 1
     for size in sizes:
         row, col = size, size
         start, end = 0, 0
@@ -215,13 +227,13 @@ def random_erase(query, sizes):
                 temp[1, start:start + row, end:end + col] = 0
                 temp[2, start:start + row, end:end + col] = 0
 
-                end = end + 8
+                end = end + inc
                 aug_query.append(temp)
                 c += 1
                 i += 1
                 # if not vis:
                 #   save_fig(temp, size, i)
-            start = start + 8
+            start = start + inc
             r += 1
     return aug_query, (r, c)
 
@@ -272,7 +284,10 @@ if opts.acc:
             count = 0
             aug_img.unsqueeze_(0)
             with torch.no_grad():
-                query_vec = model(aug_img.cuda())
+                if opts.name == 'siamese':
+                    _, query_vec = model(aug_img.cuda())
+                else:
+                    query_vec = model(aug_img.cuda())
             index = get_index(gallery_feature, gallery_cam, gallery_label, query_vec)
             for i in range(10):
                 label = gallery_label[index[i]]
@@ -294,11 +309,14 @@ if opts.acc:
         ax.axis('off')
         imshow(query_path, 'hmap_'+str(size)+'*'+str(size), acc)
         res_acc.append(acc)
-    directory = './network_attention/' + str(opts.query_index)
+    directory = './network_attention/' + opts.name + '_' + str(opts.query_index)
+    if opts.hr:
+        im_name = '/acc_heatmap_hr.png'
+    else:
+        im_name = '/acc_heatmap_lr.png'
     if not os.path.exists(directory):
         os.makedirs(directory)
-    fig.savefig(directory + '/acc_heatmap.png')
-
+    fig.savefig(directory + im_name)
 
 query, _ = random_erase(query, erase_size)
 query_vis, _ = random_erase(query_vis, erase_size)
