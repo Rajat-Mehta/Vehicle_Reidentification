@@ -83,7 +83,7 @@ class ft_net_siamese(nn.Module):
 # Defines the new fc layer and classification layer
 # |--Linear--|--bn--|--relu--|--Linear--|
 class ClassBlock(nn.Module):
-    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=512, linear=True, return_f = False):
+    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=64, linear=True, return_f = False):
         super(ClassBlock, self).__init__()
         self.return_f = return_f
         add_block = []
@@ -239,7 +239,7 @@ class ft_net(nn.Module):
         if stride == 1:
             model_ft.layer4[0].downsample[0].stride = (1, 1)
             model_ft.layer4[0].conv2.stride = (1, 1)
-
+        self.return_f = return_f
         self.pool = pool
         if pool == 'avg+max':
             model_ft.avgpool2 = nn.AdaptiveAvgPool2d((1, 1))
@@ -274,8 +274,11 @@ class ft_net(nn.Module):
         elif self.pool == 'avg':
             x = self.model.avgpool(x)
             x = x.view(x.size(0), x.size(1))
-        x = self.classifier(x)
-        return x
+        x, f = self.classifier(x)
+        if self.return_f:
+            return x, f
+        else:
+            return x
 
 
 # Define the DenseNet121-based Model

@@ -46,7 +46,7 @@ parser.add_argument('--name', default='siamese', type=str, help='output model na
 parser.add_argument('--data_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='training dir path')
 parser.add_argument('--train_all', action='store_true', help='use all training data')
 parser.add_argument('--color_jitter', action='store_true', help='use color jitter in training')
-parser.add_argument('--batchsize', default=32, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=16, type=int, help='batchsize')
 parser.add_argument('--poolsize', default=128, type=int, help='poolsize')
 parser.add_argument('--margin', default=0.3, type=float, help='margin')
 parser.add_argument('--lr', default=0.01, type=float, help='margin')
@@ -344,10 +344,15 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 optimizer.zero_grad()
 
                 # forward
-                # model_eval = copy.deepcopy(model)
-                # model_eval = model_eval.eval()
-                outputs, f = model(inputs)
-                _, pf = model(pos)
+                if phase == 'val':
+                    with torch.no_grad():
+                        outputs, f = model(inputs)
+                        _, pf = model(pos)
+                else:
+                    # model_eval = copy.deepcopy(model)
+                    # model_eval = model_eval.eval()
+                    outputs, f = model(inputs)
+                    _, pf = model(pos)
                 # pf = Variable( pf, requires_grad=True)
                 neg_labels = pos_labels
                 # hard-neg
@@ -430,7 +435,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 running_margin +=float(torch.sum(pscore-nscore))
                 running_reg += reg
 
-            datasize = dataset_sizes['train']//opt.batchsize * opt.batchsize
+            datasize = dataset_sizes[phase]//opt.batchsize * opt.batchsize
             epoch_loss = running_loss / datasize
             epoch_reg = opt.alpha*running_reg/ datasize
             epoch_acc = running_corrects / datasize
@@ -446,12 +451,21 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             y_err[phase].append(1.0-epoch_acc)
             # deep copy the model
             if epoch_margin>last_margin:
-                last_margin = epoch_margin            
+                last_margin = epoch_margin
                 last_model_wts = model.state_dict()
 
             if epoch%10 == 9:
                 save_network(model, epoch)
             draw_curve(epoch)
+
+            '''
+            if phase == 'val':
+                last_model_wts = model.state_dict()
+                if epoch % 10 == 9:
+                    save_network(model, epoch)
+                draw_curve(epoch)
+            '''
+
         time_elapsed = time.time() - since
         print('Training complete in {:.0f}m {:.0f}s'.format(
             time_elapsed // 60, time_elapsed % 60))
@@ -515,7 +529,7 @@ if not opt.resume and not opt.finetune_PT:
     if opt.use_dense:
         model = ft_net_dense(len(class_names))
     else:
-        model = ft_net_siamese(len(class_names))
+        model = ft_net(len(class_names), return_f=True)
 
     if opt.PCB:
         model = PCB(len(class_names))
@@ -570,7 +584,7 @@ exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer_ft, milestones=[40, 60], g
 #
 if not os.path.isdir(dir_name):
     os.mkdir(dir_name)
-copyfile('train_siamese.py', dir_name+'/train_new.py')
+copyfile('train_siamese.py', dir_name+'/train_siamese.py')
 copyfile('model.py', dir_name+'/model.py')
 copyfile('tripletfolder.py', dir_name+'/tripletfolder.py')
 

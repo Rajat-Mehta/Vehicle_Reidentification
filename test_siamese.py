@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser(description='Training')
 parser.add_argument('--gpu_ids', default='0', type=str, help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--which_epoch', default='69', type=str, help='0,1,2,3...or last')
 parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
-parser.add_argument('--batchsize', default=8, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=16, type=int, help='batchsize')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--multi', action='store_true', help='use multiple query')
@@ -125,7 +125,7 @@ def extract_feature(model, dataloaders):
         n, c, h, w = img.size()
         count += n
         print(count)
-        ff = torch.FloatTensor(n, 512).zero_()
+        ff = torch.FloatTensor(n, 256).zero_()
         for i in range(2):
             if(i==1):
                 img = fliplr(img)
