@@ -70,7 +70,7 @@ opt = parser.parse_args()
 fp16 = opt.fp16
 data_dir = opt.data_dir
 
-if opt.use_dense is False and opt.use_siamese is False and opt.use_NAS is False and opt.use_ftnet is False:
+if opt.use_dense is False and opt.use_siamese is False and opt.use_NAS is False and opt.use_ftnet is False and opt.PCB is False:
     print("No model selected. Please select at least one model to train like: use_ftnet or use_siamese")
     exit()
 
@@ -82,7 +82,7 @@ elif opt.use_siamese:
 elif opt.use_NAS:
     name = "ft_net_NAS"
 elif opt.PCB:
-    name = "PCB"
+    name = "ft_ResNet_PCB"
 elif opt.use_ftnet:
     name = "ft_ResNet"
 
@@ -105,6 +105,7 @@ for str_id in str_ids:
 
 # set gpu ids
 if len(gpu_ids)>0:
+    print("GPU number", gpu_ids)
     torch.cuda.set_device(gpu_ids[0])
     cudnn.benchmark = True
 ######################################################################
