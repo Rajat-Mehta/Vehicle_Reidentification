@@ -83,7 +83,7 @@ class ft_net_siamese(nn.Module):
 # Defines the new fc layer and classification layer
 # |--Linear--|--bn--|--relu--|--Linear--|
 class ClassBlock(nn.Module):
-    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=64, linear=True, return_f = False):
+    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=512, linear=True, return_f = False):
         super(ClassBlock, self).__init__()
         self.return_f = return_f
         add_block = []
@@ -114,7 +114,8 @@ class ClassBlock(nn.Module):
             f_norm = f.norm(p=2, dim=1, keepdim=True) + 1e-8
             f = f.div(f_norm)
             x = self.classifier(f)
-            return x, f
+            # return x, f
+            return f
         else:
             x = self.classifier(x)
             return x
@@ -232,7 +233,8 @@ class ContrastiveLoss(torch.nn.Module):
 # Define the ResNet50-based Model
 class ft_net(nn.Module):
 
-    def __init__(self, class_num, droprate=0.5, stride=2, init_model=None, pool='avg', return_f=False):
+    def __init__(self, class_num, droprate=0.5, stride=2, init_model=None, pool='avg', 
+                 num_bottleneck=512, return_f=False, linear=True):
         super(ft_net, self).__init__()
         model_ft = models.resnet50(pretrained=True)
         # avg pooling to global pooling
@@ -249,7 +251,8 @@ class ft_net(nn.Module):
         elif pool == 'avg':
             model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.model = model_ft
-            self.classifier = ClassBlock(2048, class_num, droprate, return_f=return_f)
+            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear, 
+                                        return_f=return_f, num_bottleneck=num_bottleneck)
 
         if init_model != None:
             self.model = init_model.model
@@ -274,11 +277,8 @@ class ft_net(nn.Module):
         elif self.pool == 'avg':
             x = self.model.avgpool(x)
             x = x.view(x.size(0), x.size(1))
-        x, f = self.classifier(x)
-        if self.return_f:
-            return x, f
-        else:
-            return x
+        x = self.classifier(x)
+        return x
 
 
 # Define the DenseNet121-based Model
@@ -356,9 +356,9 @@ class ft_net_middle(nn.Module):
 
 # Part Model proposed in Yifan Sun etal. (2018)
 class PCB(nn.Module):
-    def __init__(self, class_num):
+    def __init__(self, class_num, return_f=False, num_bottleneck=256):
         super(PCB, self).__init__()
-
+        self.return_f=return_f
         self.part = 6  # We cut the pool5 to 6 parts
         model_ft = models.resnet50(pretrained=True)
         self.model = model_ft
@@ -370,7 +370,8 @@ class PCB(nn.Module):
         # define 6 classifiers
         for i in range(self.part):
             name = 'classifier' + str(i)
-            setattr(self, name, ClassBlock(2048, class_num, droprate=0.5, relu=False, bnorm=True, num_bottleneck=256))
+            setattr(self, name, ClassBlock(2048, class_num, droprate=0.5, relu=False, bnorm=True, 
+                    num_bottleneck=num_bottleneck, return_f=return_f))
 
     def forward(self, x):
         x = self.model.conv1(x)
@@ -386,21 +387,28 @@ class PCB(nn.Module):
         x = self.dropout(x)
         part = {}
         predict = {}
+
         # get six part feature batchsize*2048*6
         for i in range(self.part):
             part[i] = torch.squeeze(x[:, :, i])
             name = 'classifier' + str(i)
             c = getattr(self, name)
             predict[i] = c(part[i])
-
         # sum prediction
         # y = predict[0]
         # for i in range(self.part-1):
         #    y += predict[i+1]
-        y = []
-        for i in range(self.part):
-            y.append(predict[i])
-        return y
+
+        if not self.return_f:
+            y = []
+            for i in range(0, self.part):
+                y.append(predict[i])  
+            return y
+        else:
+            conc = predict[0]
+            for i in range(1, self.part):
+                conc = torch.cat((conc, predict[i]), dim=1)
+            return conc, conc
 
 
 class PCB_test(nn.Module):
