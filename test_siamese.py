@@ -34,7 +34,10 @@ opt = parser.parse_args()
 
 str_ids = opt.gpu_ids.split(',')
 # which_epoch = opt.which_epoch
-name = "siamese"
+if opt.PCB:
+    name = "siamese_PCB"
+else:
+    name = "siamese"
 test_dir = opt.test_dir
 
 gpu_ids = []
@@ -125,12 +128,15 @@ def extract_feature(model, dataloaders):
         n, c, h, w = img.size()
         count += n
         print(count)
-        ff = torch.FloatTensor(n, 256).zero_()
+        ff = torch.FloatTensor(n, 1536).zero_()
+        if opt.PCB:
+            ff = torch.FloatTensor(n,2048,6).zero_() # we have six parts
+            
         for i in range(2):
             if(i==1):
                 img = fliplr(img)
             input_img = Variable(img.cuda())
-            outputs, f = model(input_img)
+            f = model(input_img)
             f = f.data.cpu()
             ff = ff+f
         # norm feature
@@ -183,9 +189,13 @@ else:
     model_structure = ft_net(opt.nclasses, return_f=True)
 
 if opt.PCB:
-    model_structure = PCB(opt.nclasses)
+    model_structure = PCB(opt.nclasses, return_f=True, num_bottleneck=512)
 
 model = load_network(model_structure)
+
+if opt.PCB:
+    model = PCB_test(model)
+
 #model = model_structure
 
 # Remove the final fc layer and classifier layer
@@ -214,4 +224,5 @@ scipy.io.savemat('./model/' + name + '/pytorch_result_VeRi.mat', result)
 if opt.multi:
     result = {'mquery_f':mquery_feature.numpy(),'mquery_label':mquery_label,'mquery_cam':mquery_cam}
     scipy.io.savemat('../model/' + name + '/multi_query.mat', result)
+
 '''
