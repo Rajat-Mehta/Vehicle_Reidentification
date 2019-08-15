@@ -11,6 +11,8 @@ parser = argparse.ArgumentParser(description='Evaluate')
 parser.add_argument('--use_siamese',  action='store_true', help='evaluate siamese or not')
 parser.add_argument('--keep_num',  default=100, help='how many images to keep from other cameras')
 parser.add_argument('--use_single_camera',  action='store_true', help='use single camera gallery images')
+parser.add_argument('--PCB',  action='store_true', help='evaluate PCB or not')
+parser.add_argument('--siamese_PCB',  action='store_true', help='evaluate Siamese with PCB or not')
 
 opts = parser.parse_args()
 KEEP_NUM = int(opts.keep_num)
@@ -19,6 +21,10 @@ gallery_size = 0
 
 if opts.use_siamese:
     name = 'siamese'
+elif opts.siamese_PCB:
+    name = 'siamese_PCB'
+elif opts.PCB:
+    name = 'ft_ResNet_PCB'
 else:
     name = 'ft_ResNet'
 
@@ -217,10 +223,9 @@ def compute_mAP(index, good_index, junk_index):
 
 
 ######################################################################
-if opts.use_siamese:
-    result = scipy.io.loadmat('./model/' + name + '/pytorch_result_VeRi.mat')
-else:
-    result = scipy.io.loadmat('./model/' + name + '/pytorch_result_VeRi.mat')
+feat_path = './model/' + name + '/pytorch_result_VeRi.mat'
+result = scipy.io.loadmat(feat_path)
+print("Loading saved features from:", feat_path)
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
