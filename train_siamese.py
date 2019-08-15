@@ -71,7 +71,11 @@ parser.add_argument('--nclasses', default=575, type=int, help='width')
 opt = parser.parse_args()
 
 data_dir = opt.data_dir
-name = 'siamese'
+if not opt.PCB:
+    name = 'siamese'
+else:
+    name = 'siamese_PCB'
+
 str_ids = opt.gpu_ids.split(',')
 fp16 = opt.fp16
 
@@ -181,8 +185,10 @@ def load_network(name, finetune=False):
     epoch = epoch.split('.')[0]
     if not epoch == 'last':
         epoch = int(epoch)
-
-    model = ft_net(len(class_names), return_f=True)
+    if opt.PCB:
+        model = PCB(len(class_names), return_f=True)
+    else:
+        model = ft_net(len(class_names), return_f=True)
 
     # load model
     if isinstance(epoch, int):
@@ -201,8 +207,7 @@ def load_network(name, finetune=False):
 
 if opt.resume:
     model, start_epoch = load_network(name, False)
-    print("Resuming training from presaved model at epoch: ", start_epoch)
-
+    print("Resuming training from presaved model at epoch: ", start_epoch +1)
     start_epoch += 1
 else:
     start_epoch = 0
@@ -213,10 +218,6 @@ if opt.finetune_PT:
 
     start_epoch = 0
 dir_name = os.path.join('./model', name)
-
-with open('%s/opts.yaml' % dir_name, 'w') as fp:
-    yaml.dump(vars(opt), fp, default_flow_style=False)
-
 
 def visualize_dataset_new(dataloaders):
     """Imshow for Tensor."""
@@ -353,6 +354,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                     # model_eval = model_eval.eval()
                     outputs, f = model(inputs)
                     _, pf = model(pos)
+
                 # pf = Variable( pf, requires_grad=True)
                 neg_labels = pos_labels
                 # hard-neg
@@ -396,8 +398,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 y = torch.ones(now_batch_size)
                 y = Variable(y.cuda())
 
-                if not opt.PCB:
-                    _, preds = torch.max(outputs.data, 1)
+                if True:
+                    #_, preds = torch.max(outputs.data, 1)
                     #loss = criterion(outputs, labels)
                     #loss_triplet = criterion_triplet(f, pf, nf)
                     reg = torch.sum((1+nscore)**2) + torch.sum((-1+pscore)**2)
@@ -410,8 +412,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                     for i in range(num_part):
                         part[i] = outputs[i]
 
-                    score = sm(part[0]) + sm(part[1]) +sm(part[2]) + sm(part[3]) +sm(part[4]) +sm(part[5])
-                    _, preds = torch.max(score.data, 1)
+                    #score = sm(part[0]) + sm(part[1]) +sm(part[2]) + sm(part[3]) +sm(part[4]) +sm(part[5])
+                    #_, preds = torch.max(score.data, 1)
 
                     loss = criterion(part[0], labels)
                     for i in range(num_part-1):
@@ -532,7 +534,7 @@ if not opt.resume and not opt.finetune_PT:
         model = ft_net(len(class_names), return_f=True)
 
     if opt.PCB:
-        model = PCB(len(class_names))
+        model = PCB(len(class_names), return_f=True, num_bottleneck=512)
 
 
 if use_gpu:
