@@ -45,7 +45,7 @@ opt = parser.parse_args()
 ### load config ###
 # load the training config
 
-if opt.use_ftnet is False and opt.use_siamese is False:
+if opt.use_ftnet is False and opt.use_siamese is False and opt.PCB is False:
     print("No model selected. Please select at least one model: use_ftnet or use_siamese")
     exit()
 
@@ -53,6 +53,8 @@ if opt.use_ftnet:
     name = "ft_ResNet"
 elif opt.use_siamese:
     name = "siamese"
+elif opt.PCB:
+    name = "ft_ResNet_PCB"
 
 opt.nclasses = 575
 
@@ -79,6 +81,8 @@ print("Epoch: ", opt.which_epoch)
 print("Use_siamese: ", opt.use_siamese)
 print("Use_ftnet: ", opt.use_ftnet)
 print("nclasses: ", opt.nclasses)
+print("Use_PCB: ", opt.PCB)
+
 
 
 str_ids = opt.gpu_ids.split(',')
@@ -153,6 +157,8 @@ use_gpu = torch.cuda.is_available()
 #---------------------------
 def load_network(network):
     save_path = os.path.join('./model', name, 'net_%03d.pth'%int(opt.which_epoch))
+    print('loading model from: ', save_path)
+
     network.load_state_dict(torch.load(save_path))
     return network
 
