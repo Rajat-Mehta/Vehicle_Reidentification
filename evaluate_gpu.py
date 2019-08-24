@@ -13,6 +13,7 @@ parser.add_argument('--keep_num',  default=100, help='how many images to keep fr
 parser.add_argument('--use_single_camera',  action='store_true', help='use single camera gallery images')
 parser.add_argument('--PCB',  action='store_true', help='evaluate PCB or not')
 parser.add_argument('--siamese_PCB',  action='store_true', help='evaluate Siamese with PCB or not')
+parser.add_argument('--fusion',  action='store_true', help='evaluate fusion model or not')
 
 opts = parser.parse_args()
 KEEP_NUM = int(opts.keep_num)
@@ -25,6 +26,8 @@ elif opts.siamese_PCB:
     name = 'siamese_PCB'
 elif opts.PCB:
     name = 'ft_ResNet_PCB'
+elif opts.fusion:
+    name = 'fusion'
 else:
     name = 'ft_ResNet'
 
