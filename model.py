@@ -356,13 +356,20 @@ class ft_net_middle(nn.Module):
 
 # Part Model proposed in Yifan Sun etal. (2018)
 class PCB(nn.Module):
-    def __init__(self, class_num, return_f=False, num_bottleneck=256):
+    def __init__(self, class_num, return_f=False, num_bottleneck=256, num_parts=6, parts_ver=1):
         super(PCB, self).__init__()
+        #self.in_features = 2048
         self.return_f=return_f
-        self.part = 6  # We cut the pool5 to 6 parts
+        self.part = num_parts  # We cut the pool5 to 6 parts
+        self.parts_ver = parts_ver
+        if self.parts_ver:
+            pool_size=(self.part, 1)
+        else:
+            pool_size=(1, self.part)
         model_ft = models.resnet50(pretrained=True)
         self.model = model_ft
-        self.avgpool = nn.AdaptiveAvgPool2d((self.part, 1))
+        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
+        #self.conv11 = nn.Conv2d(self.in_features, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
         self.dropout = nn.Dropout(p=0.5)
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
@@ -384,16 +391,21 @@ class PCB(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
         x = self.avgpool(x)
+        #x = self.conv11(x)
         x = self.dropout(x)
         part = {}
         predict = {}
 
         # get six part feature batchsize*2048*6
         for i in range(self.part):
-            part[i] = torch.squeeze(x[:, :, i])
+            if self.parts_ver:
+                part[i] = torch.squeeze(x[:, :, i])
+            else:
+                part[i] = torch.squeeze(x[:, :, :, i])
             name = 'classifier' + str(i)
             c = getattr(self, name)
             predict[i] = c(part[i])
+        
         # sum prediction
         # y = predict[0]
         # for i in range(self.part-1):
@@ -412,11 +424,17 @@ class PCB(nn.Module):
 
 
 class PCB_test(nn.Module):
-    def __init__(self, model):
+    def __init__(self, model, num_parts, parts_ver=1):
         super(PCB_test, self).__init__()
-        self.part = 6
+        self.part = num_parts
         self.model = model.model
-        self.avgpool = nn.AdaptiveAvgPool2d((self.part, 1))
+        self.parts_ver=parts_ver
+        if self.parts_ver:
+            pool_size=(self.part, 1)
+        else:
+            pool_size=(1, self.part)
+            
+        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
@@ -432,7 +450,10 @@ class PCB_test(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
         x = self.avgpool(x)
-        y = x.view(x.size(0), x.size(1), x.size(2))
+        if self.parts_ver:
+            y = x.view(x.size(0), x.size(1), x.size(2))
+        else:
+            y = x.view(x.size(0), x.size(1), x.size(3))
         return y
 
 
