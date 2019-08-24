@@ -27,6 +27,7 @@ parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch',
 parser.add_argument('--batchsize', default=16, type=int, help='batchsize')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
+parser.add_argument('--fusion', action='store_true', help='use fusion')
 parser.add_argument('--multi', action='store_true', help='use multiple query')
 parser.add_argument('--fp16', action='store_true', help='use fp16.')
 
@@ -36,6 +37,10 @@ str_ids = opt.gpu_ids.split(',')
 # which_epoch = opt.which_epoch
 if opt.PCB:
     name = "siamese_PCB"
+elif opt.fusion:
+    name = "fusion"
+    fusion_supp_model = "ft_ResNet_PCB"
+    fusion_supp_which_epoch = 59
 else:
     name = "siamese"
 test_dir = opt.test_dir
@@ -73,8 +78,9 @@ if len(gpu_ids)>0:
 # We will use torchvision and torch.utils.data packages for loading the
 # data.
 #
+h, w = 384,192
 data_transforms = transforms.Compose([
-        transforms.Resize((256,128), interpolation=3),
+        transforms.Resize((h, w), interpolation=3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
@@ -98,12 +104,20 @@ use_gpu = torch.cuda.is_available()
 ######################################################################
 # Load model
 #---------------------------
-def load_network(network):
+def load_network(network, network_supp=None, fusion_support=False):
+
     save_filename = 'net_%03d.pth' % int(opt.which_epoch)
     save_path = os.path.join('./model', name, save_filename)
-    print('loading model from: ', save_path)
-
+    print('Loading siamese model from: ', save_path)
     network.load_state_dict(torch.load(save_path))
+    
+    if fusion_support:
+        save_filename_supp = 'net_%03d.pth' % int(fusion_supp_which_epoch)
+        save_path_supp = os.path.join('./model', fusion_supp_model, save_filename_supp)
+        print('Loading fusion support model from: ', save_path_supp)
+        network_supp.load_state_dict(torch.load(save_path_supp))
+        return network, network_supp
+    
     return network
 
 
@@ -120,7 +134,7 @@ def fliplr(img):
     return img_flip
 
 
-def extract_feature(model, dataloaders):
+def extract_feature(model, dataloaders, model_PCB=None):
     features = torch.FloatTensor()
     count = 0
     for data in dataloaders:
@@ -128,17 +142,24 @@ def extract_feature(model, dataloaders):
         n, c, h, w = img.size()
         count += n
         print(count)
-        ff = torch.FloatTensor(n, 1536).zero_()
+        ff = torch.FloatTensor(n, 2048).zero_()
         if opt.PCB:
             ff = torch.FloatTensor(n,2048,6).zero_() # we have six parts
-            
+        if opt.fusion:
+            ff_PCB = torch.FloatTensor(n,2048,6).zero_() # we have six parts
+
         for i in range(2):
             if(i==1):
                 img = fliplr(img)
             input_img = Variable(img.cuda())
             f = model(input_img)
-            f = f.data.cpu()
+            f = f.data.cpu().float()
             ff = ff+f
+
+            if opt.fusion:
+                f_PCB = model_PCB(input_img)
+                f_PCB = f_PCB.data.cpu().float()
+                ff_PCB = ff_PCB+f_PCB
         # norm feature
         if opt.PCB:
             # feature size (n,2048,6)
@@ -150,6 +171,12 @@ def extract_feature(model, dataloaders):
         else:
             fnorm = torch.norm(ff, p=2, dim=1, keepdim=True)
             ff = ff.div(fnorm.expand_as(ff))
+            
+            if opt.fusion:
+                fnorm_PCB = torch.norm(ff_PCB, p=2, dim=1, keepdim=True) * np.sqrt(6) 
+                ff_PCB = ff_PCB.div(fnorm_PCB.expand_as(ff_PCB))
+                ff_PCB = ff_PCB.view(ff_PCB.size(0), -1)
+                ff = torch.cat((ff,ff_PCB),1)
 
         features = torch.cat((features,ff), 0)
     return features
@@ -186,12 +213,23 @@ print('-------test-----------')
 if opt.use_dense:
     model_structure = ft_net_dense(opt.nclasses)
 else:
-    model_structure = ft_net(opt.nclasses, return_f=True)
+    model_structure = ft_net(opt.nclasses, return_f=True, num_bottleneck=2048)
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses, return_f=True, num_bottleneck=512)
 
-model = load_network(model_structure)
+if opt.fusion:
+    """ load ResNet_PCB model here"""
+    model_structure_PCB = PCB(opt.nclasses, return_f=True, num_bottleneck=256)
+    model, model_PCB = load_network(model_structure, model_structure_PCB, True)
+    model_PCB = PCB_test(model_PCB)
+    model_PCB = model_PCB.eval()
+    model = model.eval()
+
+else:
+    model = load_network(model_structure)
+    model = model.eval()
+
 
 if opt.PCB:
     model = PCB_test(model)
@@ -206,13 +244,13 @@ if opt.PCB:
 #    model = PCB_test(model)
 
 # Change to test mode
-model = model.eval()
 if use_gpu:
     model = model.cuda()
+    model_PCB = model_PCB.cuda()
 
 # Extract feature
-gallery_feature = extract_feature(model, dataloaders['gallery'])
-query_feature = extract_feature(model, dataloaders['query'])
+gallery_feature = extract_feature(model, dataloaders['gallery'], model_PCB)
+query_feature = extract_feature(model, dataloaders['query'], model_PCB)
 if opt.multi:
     mquery_feature = extract_feature(model, dataloaders['multi-query'])
     
