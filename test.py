@@ -34,6 +34,8 @@ parser.add_argument('--which_epoch', default='59', type=str, help='0,1,2,3...or 
 parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
 parser.add_argument('--name', type=str, help='save model path')
 parser.add_argument('--batchsize', default=256, type=int, help='batchsize')
+parser.add_argument('--parts', default=4, type=int, help='batchsize')
+parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--use_siamese', action='store_true', help='use siamese')
@@ -58,6 +60,11 @@ elif opt.PCB:
 
 opt.nclasses = 575
 
+h, w = 256, 128
+if opt.PCB and opt.PCB_Ver:
+    h, w = 384, 192
+elif opt.PCB and not opt.PCB_Ver:
+    h, w = 192, 384
 
 config_path = os.path.join('./model', name, 'opts.yaml')
 if os.path.isfile(config_path):
@@ -114,7 +121,7 @@ if opt.use_siamese:
     ]
 else:
     trans = [
-        transforms.Resize((256,128), interpolation=3),
+        transforms.Resize((h, w), interpolation=3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ############### Ten Crop
@@ -132,12 +139,12 @@ data_transforms = transforms.Compose(trans)
 
 if opt.PCB:
     data_transforms = transforms.Compose([
-        transforms.Resize((384,192), interpolation=3),
+        transforms.Resize((h, w), interpolation=3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) 
     ])
 
-
+print(data_transforms)
 data_dir = test_dir
 
 if opt.multi:
@@ -187,7 +194,7 @@ def extract_feature(model, dataloaders):
         ff = torch.FloatTensor(n,512).zero_()
 
         if opt.PCB:
-            ff = torch.FloatTensor(n,2048,6).zero_() # we have six parts
+            ff = torch.FloatTensor(n,2048,opt.parts).zero_() # we have six parts
         for i in range(2):
             if(i==1):
                 img = fliplr(img)
@@ -202,7 +209,7 @@ def extract_feature(model, dataloaders):
             # feature size (n,2048,6)
             # 1. To treat every part equally, I calculate the norm for every 2048-dim part feature.
             # 2. To keep the cosine score==1, sqrt(6) is added to norm the whole feature (2048*6).
-            fnorm = torch.norm(ff, p=2, dim=1, keepdim=True) * np.sqrt(6) 
+            fnorm = torch.norm(ff, p=2, dim=1, keepdim=True) * np.sqrt(opt.parts) 
             ff = ff.div(fnorm.expand_as(ff))
             ff = ff.view(ff.size(0), -1)
         else:
@@ -256,7 +263,7 @@ elif opt.use_ftnet:
     model_structure = ft_net(opt.nclasses, stride=opt.stride)
 
 if opt.PCB:
-    model_structure = PCB(opt.nclasses)
+    model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver)
 
 #if opt.fp16:
 #    model_structure = network_to_half(model_structure)
@@ -268,7 +275,7 @@ if opt.PCB:
     #if opt.fp16:
     #    model = PCB_test(model[1])
     #else:
-        model = PCB_test(model)
+        model = PCB_test(model, num_parts=opt.parts, parts_ver=opt.PCB_Ver)
 else:
     #if opt.fp16:
         #model[1].model.fc = nn.Sequential()
