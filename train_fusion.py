@@ -186,7 +186,7 @@ def load_network(name, finetune=False):
     if opt.PCB:
         model = PCB(len(class_names), return_f=True)
     else:
-        model = ft_net(len(class_names), return_f=True)
+        model = ft_net(len(class_names), return_f=True, num_bottleneck=2048)
 
     # load model
     if isinstance(epoch, int):
@@ -561,7 +561,7 @@ def save_network(network, epoch_label):
         network.cuda(gpu_ids[0])
 
 def load_network_PCB(network):
-    save_path = os.path.join('./model', 'ft_ResNet_PCB', 'net_%03d.pth'%69)
+    save_path = os.path.join('./model', 'ft_ResNet_PCB', 'net_%03d.pth'%59)
     print('PCB_ResNet: Loading pretrainded model from: ', save_path)
     network.load_state_dict(torch.load(save_path))
     return network
@@ -572,7 +572,8 @@ def load_network_PCB(network):
 #
 # Load a pretrainied model and reset final fully connected layer.
 #
-model = ft_net(len(class_names), return_f=True, num_bottleneck=2048)
+if not opt.resume:
+    model = ft_net(len(class_names), return_f=True, num_bottleneck=2048)
 
 model_structure_PCB = PCB(len(class_names), return_f=True)
 print(model)
@@ -589,6 +590,8 @@ if use_gpu:
 
 criterion = nn.CrossEntropyLoss()
 
+if start_epoch >= 40:
+    opt.lr = opt.lr*0.1
 
 if not opt.PCB:
     ignored_params = list(map(id, model.model.fc.parameters() )) + list(map(id, model.classifier.parameters() ))
