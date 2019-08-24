@@ -63,6 +63,9 @@ parser.add_argument('--resume', action='store_true', help='resume training')
 parser.add_argument('--h', default=256, type=int, help='height')
 parser.add_argument('--w', default=128, type=int, help='width')
 parser.add_argument('--pool', default='avg', type=str, help='pool avg')
+parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
+parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
+
 
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory' )
 opt = parser.parse_args()
@@ -87,6 +90,11 @@ elif opt.use_ftnet:
     name = "ft_ResNet"
 
 opt.name = name
+
+if opt.PCB and opt.PCB_Ver:
+    opt.h, opt.w = 384, 192
+elif opt.PCB and not opt.PCB_Ver:
+    opt.h, opt.w = 192, 384
 
 
 if opt.resume:
@@ -149,14 +157,30 @@ transform_val_list = [
         ]
 
 if opt.PCB:
-    transform_train_list = [
-        transforms.Resize((384, 192), interpolation=3),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ]
+    transform_train_list = []
+
+    transform_train_list = transform_train_list + [
+        transforms.Resize((opt.h, opt.w), interpolation=3)
+        ] 
+    transform_train_list = transform_train_list + [transforms.RandomHorizontalFlip()]
+    
+    if opt.aug_comb:
+        transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate, tl=opt.translate, scale=opt.scale, aug_comb=opt.aug_comb)]
+    else:
+        if opt.rotate:
+            transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate)]
+
+        if opt.translate:
+            transform_train_list = transform_train_list + [ImgAugTransform(tl=opt.translate)]
+
+        if opt.scale:
+            transform_train_list = transform_train_list + [ImgAugTransform(scale=opt.scale)]
+        
+    transform_train_list = transform_train_list + [transforms.ToTensor()]
+    transform_train_list = transform_train_list + [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+
     transform_val_list = [
-        transforms.Resize(size=(384, 192), interpolation=3),  # Image.BICUBIC
+        transforms.Resize(size=(opt.h, opt.w), interpolation=3),  # Image.BICUBIC
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]
@@ -208,7 +232,7 @@ def visualize_dataset_new(dataloaders):
     ax[2].plot(xs, 3 * ys)
     ax[19].plot(ys ** 2, xs)
 
-    plt.savefig("./model/ft_ResNet/dataset.png")
+    plt.savefig(os.path.join("./model", name, "dataset.png"))
 
 
 def visualize_dataset(dataloaders):
@@ -249,7 +273,6 @@ dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=opt.
               for x in ['train', 'val']}
 
 visualize_dataset_new(dataloaders)
-
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 class_names = image_datasets['train'].classes
 
@@ -286,7 +309,6 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
     # best_acc = 0.0
     warm_up = 0.1  # We start from the 0.1*lrRate
     warm_iteration = round(dataset_sizes['train'] / opt.batchsize) * opt.warm_epoch  # first 5 epoch
-
     for epoch in range(num_epochs - start_epoch):
         epoch = epoch + start_epoch
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
@@ -331,11 +353,13 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 else:
                     part = {}
                     sm = nn.Softmax(dim=1)
-                    num_part = 6
+                    num_part = opt.parts
                     for i in range(num_part):
                         part[i] = outputs[i]
-
-                    score = sm(part[0]) + sm(part[1]) + sm(part[2]) + sm(part[3]) + sm(part[4]) + sm(part[5])
+                    if num_part == 6:
+                        score = sm(part[0]) + sm(part[1]) + sm(part[2]) + sm(part[3]) + sm(part[4]) + sm(part[5])
+                    else:
+                        score = sm(part[0]) + sm(part[1]) + sm(part[2]) + sm(part[3])
                     _, preds = torch.max(score.data, 1)
 
                     loss = criterion(part[0], labels)
@@ -463,7 +487,7 @@ if not opt.resume:
         model = ft_net(len(class_names), opt.droprate, opt.stride)
 
     if opt.PCB:
-        model = PCB(len(class_names))
+        model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver)
 
 
 if opt.use_siamese:
@@ -491,24 +515,33 @@ else:
                      + list(map(id, model.classifier1.parameters()))
                      + list(map(id, model.classifier2.parameters()))
                      + list(map(id, model.classifier3.parameters()))
-                     + list(map(id, model.classifier4.parameters()))
-                     + list(map(id, model.classifier5.parameters()))
-                     # +list(map(id, model.classifier6.parameters()))
-                     # +list(map(id, model.classifier7.parameters()))
-                       )
+                     )
+    if opt.parts == 6:
+        ignored_params+= (list(map(id, model.classifier4.parameters()))
+                          + list(map(id, model.classifier5.parameters()))
+                          )
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
-    optimizer_ft = optim.SGD([
-             {'params': base_params, 'lr': 0.1*opt.lr},
-             {'params': model.model.fc.parameters(), 'lr': opt.lr},
-             {'params': model.classifier0.parameters(), 'lr': opt.lr},
-             {'params': model.classifier1.parameters(), 'lr': opt.lr},
-             {'params': model.classifier2.parameters(), 'lr': opt.lr},
-             {'params': model.classifier3.parameters(), 'lr': opt.lr},
-             {'params': model.classifier4.parameters(), 'lr': opt.lr},
-             {'params': model.classifier5.parameters(), 'lr': opt.lr},
-             # {'params': model.classifier6.parameters(), 'lr': 0.01},
-             # {'params': model.classifier7.parameters(), 'lr': 0.01}
-         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+
+    if opt.parts == 6:
+        optimizer_ft = optim.SGD([
+                {'params': base_params, 'lr': 0.1*opt.lr},
+                {'params': model.model.fc.parameters(), 'lr': opt.lr},
+                {'params': model.classifier0.parameters(), 'lr': opt.lr},
+                {'params': model.classifier1.parameters(), 'lr': opt.lr},
+                {'params': model.classifier2.parameters(), 'lr': opt.lr},
+                {'params': model.classifier3.parameters(), 'lr': opt.lr},
+                {'params': model.classifier4.parameters(), 'lr': opt.lr},
+                {'params': model.classifier5.parameters(), 'lr': opt.lr}
+            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+    else:
+        optimizer_ft = optim.SGD([
+                {'params': base_params, 'lr': 0.1*opt.lr},
+                {'params': model.model.fc.parameters(), 'lr': opt.lr},
+                {'params': model.classifier0.parameters(), 'lr': opt.lr},
+                {'params': model.classifier1.parameters(), 'lr': opt.lr},
+                {'params': model.classifier2.parameters(), 'lr': opt.lr},
+                {'params': model.classifier3.parameters(), 'lr': opt.lr}
+            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
 
 # Decay LR by a factor of 0.1 every 40 epochs
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
