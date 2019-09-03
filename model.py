@@ -5,6 +5,8 @@ from torchvision import models
 from torch.autograd import Variable
 import pretrainedmodels
 import torch.nn.functional as F
+from sklearn.cluster import KMeans
+
 ######################################################################
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -356,26 +358,33 @@ class ft_net_middle(nn.Module):
 
 # Part Model proposed in Yifan Sun etal. (2018)
 class PCB(nn.Module):
-    def __init__(self, class_num, return_f=False, num_bottleneck=256, num_parts=6, parts_ver=1):
+    def __init__(self, class_num, return_f=False, num_bottleneck=256, num_parts=6, parts_ver=1, checkerboard=False):
         super(PCB, self).__init__()
         #self.in_features = 2048
         self.return_f=return_f
         self.part = num_parts  # We cut the pool5 to 6 parts
         self.parts_ver = parts_ver
-        if self.parts_ver:
+        self.checkerboard = checkerboard
+
+        if self.parts_ver == 1:
             pool_size=(self.part, 1)
-        else:
+        elif self.parts_ver == 0:
             pool_size=(1, self.part)
+        
+        if self.checkerboard:
+            pool_size=(int(num_parts/2),2)
+
         model_ft = models.resnet50(pretrained=True)
         self.model = model_ft
         self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
-        #self.conv11 = nn.Conv2d(self.in_features, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        # self.conv11 = nn.Conv2d(self.in_features, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
         self.dropout = nn.Dropout(p=0.5)
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
-        # define 6 classifiers
-        for i in range(self.part):
+        
+        # define classifiers
+        for i in range(num_parts):
             name = 'classifier' + str(i)
             setattr(self, name, ClassBlock(2048, class_num, droprate=0.5, relu=False, bnorm=True, 
                     num_bottleneck=num_bottleneck, return_f=return_f))
@@ -385,7 +394,6 @@ class PCB(nn.Module):
         x = self.model.bn1(x)
         x = self.model.relu(x)
         x = self.model.maxpool(x)
-
         x = self.model.layer1(x)
         x = self.model.layer2(x)
         x = self.model.layer3(x)
@@ -396,16 +404,28 @@ class PCB(nn.Module):
         part = {}
         predict = {}
 
-        # get six part feature batchsize*2048*6
-        for i in range(self.part):
-            if self.parts_ver:
-                part[i] = torch.squeeze(x[:, :, i])
-            else:
-                part[i] = torch.squeeze(x[:, :, :, i])
-            name = 'classifier' + str(i)
-            c = getattr(self, name)
-            predict[i] = c(part[i])
-        
+        if self.checkerboard:
+            # get checkerboard feature maps
+            k = 0
+            for i in range(int(self.part/2)):
+                for j in range(2):
+                    part[k] = torch.squeeze(x[:, :, i, j])
+                    name = 'classifier' + str(k)
+                    c = getattr(self, name)
+                    predict[k] = c(part[k])
+                    k+=1
+        else:
+            # get six part feature batchsize*2048*6
+            for i in range(self.part):
+                if self.parts_ver == 1:
+                    part[i] = torch.squeeze(x[:, :, i])
+                elif self.parts_ver == 0:
+                    part[i] = torch.squeeze(x[:, :, :, i])
+                
+                name = 'classifier' + str(i)
+                c = getattr(self, name)
+                predict[i] = c(part[i])
+
         # sum prediction
         # y = predict[0]
         # for i in range(self.part-1):
@@ -422,18 +442,100 @@ class PCB(nn.Module):
                 conc = torch.cat((conc, predict[i]), dim=1)
             return conc, conc
 
+    def convert_to_rpp(self):
+        self.avgpool = RPP(self.part)
+        return self
+    
+    def convert_to_rpp_cluster(self):
+        self.avgpool = Cluster(self.part)
+        return self
+
+# Define the RPP layers
+class RPP(nn.Module):
+    def __init__(self,num_parts):
+        super(RPP, self).__init__()
+        self.part = num_parts
+        add_block = []
+        #add_block += [nn.Linear(2048, self.part)]
+
+        add_block += [nn.Conv2d(2048, self.part, kernel_size=1, bias=False)]
+        add_block = nn.Sequential(*add_block)
+        add_block.apply(weights_init_kaiming)
+
+        norm_block = []
+        norm_block += [nn.BatchNorm2d(2048)]
+        norm_block += [nn.ReLU(inplace=True)]
+        # norm_block += [nn.LeakyReLU(0.1, inplace=True)]
+        norm_block = nn.Sequential(*norm_block)
+        norm_block.apply(weights_init_kaiming)
+
+        self.add_block = add_block
+        self.norm_block = norm_block
+        self.softmax = nn.Softmax(dim=1)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+
+    def forward(self, x):
+        w = self.add_block(x)
+        p = self.softmax(w)
+        
+        y = []
+        for i in range(self.part):
+            p_i = p[:, i, :, :]
+            p_i = torch.unsqueeze(p_i, 1)
+            y_i = torch.mul(x, p_i)
+            y_i = self.norm_block(y_i)
+            y_i = self.avgpool(y_i)
+            y.append(y_i)
+
+        f = torch.cat(y, 2)
+
+        return f
+
+
+class Cluster(nn.Module):
+    def __init__(self, num_parts):
+        super(Cluster, self).__init__()
+        self.part = num_parts
+        self.kmeans = KMeans(n_clusters=self.part)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+
+    def forward(self, x):
+        w = self.kmeans.fit(x)
+        p = self.softmax(w)
+        
+        y = []
+        for i in range(self.part):
+            p_i = p[:, i, :, :]
+            p_i = torch.unsqueeze(p_i, 1)
+            y_i = torch.mul(x, p_i)
+            y_i = self.norm_block(y_i)
+            y_i = self.avgpool(y_i)
+            y.append(y_i)
+
+        f = torch.cat(y, 2)
+
+        return f
+
 
 class PCB_test(nn.Module):
-    def __init__(self, model, num_parts, parts_ver=1):
+    def __init__(self, model, num_parts, parts_ver=1, checkerboard=False):
         super(PCB_test, self).__init__()
         self.part = num_parts
         self.model = model.model
         self.parts_ver=parts_ver
-        if self.parts_ver:
+        self.checkerboard = checkerboard
+
+        if self.parts_ver == 1:
             pool_size=(self.part, 1)
-        else:
+        elif self.parts_ver == 0:
             pool_size=(1, self.part)
-            
+        
+        if self.checkerboard:
+            pool_size=(int(num_parts/2),2)
+
+
         self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
@@ -444,18 +546,22 @@ class PCB_test(nn.Module):
         x = self.model.bn1(x)
         x = self.model.relu(x)
         x = self.model.maxpool(x)
-
         x = self.model.layer1(x)
         x = self.model.layer2(x)
         x = self.model.layer3(x)
         x = self.model.layer4(x)
-        x = self.avgpool(x)
-        if self.parts_ver:
-            y = x.view(x.size(0), x.size(1), x.size(2))
-        else:
-            y = x.view(x.size(0), x.size(1), x.size(3))
-        return y
+        x = self.model.avgpool(x)
 
+        if self.checkerboard:
+            y = x.view(x.size(0), x.size(1), self.part)
+        
+        else:
+            if self.parts_ver == 1:
+                y = x.view(x.size(0), x.size(1), x.size(2))
+            elif self.parts_ver == 0:
+                y = x.view(x.size(0), x.size(1), x.size(3))
+        
+        return y
 
 '''
 # debug model structure
