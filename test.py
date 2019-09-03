@@ -34,14 +34,16 @@ parser.add_argument('--which_epoch', default='59', type=str, help='0,1,2,3...or 
 parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
 parser.add_argument('--name', type=str, help='save model path')
 parser.add_argument('--batchsize', default=256, type=int, help='batchsize')
-parser.add_argument('--parts', default=4, type=int, help='batchsize')
+parser.add_argument('--parts', default=6, type=int, help='batchsize')
 parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
+parser.add_argument('--RPP', action='store_true', help='use refined part pooling in PCB or not')
 parser.add_argument('--use_siamese', action='store_true', help='use siamese')
 parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
 parser.add_argument('--multi', action='store_true', help='use multiple query')
 parser.add_argument('--fp16', action='store_true', help='use fp16.')
+parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning or not.')
 
 opt = parser.parse_args()
 ### load config ###
@@ -56,7 +58,7 @@ if opt.use_ftnet:
 elif opt.use_siamese:
     name = "siamese"
 elif opt.PCB:
-    name = "ft_ResNet_PCB"
+    name = "ft_ResNet_PCB/pcb_rpp"
 
 opt.nclasses = 575
 
@@ -163,7 +165,11 @@ use_gpu = torch.cuda.is_available()
 # Load model
 #---------------------------
 def load_network(network):
-    save_path = os.path.join('./model', name, 'net_%03d.pth'%int(opt.which_epoch))
+    modelname = 'net'
+    if opt.PCB and opt.RPP:
+        save_path = os.path.join('./model', name, modelname + '_full_%03d.pth'%int(opt.which_epoch))
+    else:
+        save_path = os.path.join('./model', name, modelname + '_%03d.pth'%int(opt.which_epoch))
     print('loading model from: ', save_path)
 
     network.load_state_dict(torch.load(save_path))
@@ -193,8 +199,11 @@ def extract_feature(model, dataloaders):
         print(count)
         ff = torch.FloatTensor(n,512).zero_()
 
-        if opt.PCB:
+        if opt.PCB and not opt.CB:
             ff = torch.FloatTensor(n,2048,opt.parts).zero_() # we have six parts
+        elif opt.PCB and opt.CB:
+            ff = torch.FloatTensor(n,2048,opt.parts/2, 2).zero_() # we have six parts
+
         for i in range(2):
             if(i==1):
                 img = fliplr(img)
@@ -262,9 +271,12 @@ elif opt.use_NAS:
 elif opt.use_ftnet:
     model_structure = ft_net(opt.nclasses, stride=opt.stride)
 
-if opt.PCB:
-    model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver)
 
+if opt.PCB:
+    model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+if opt.RPP:
+    model_structure = model_structure.convert_to_rpp()
+    
 #if opt.fp16:
 #    model_structure = network_to_half(model_structure)
 
@@ -275,7 +287,8 @@ if opt.PCB:
     #if opt.fp16:
     #    model = PCB_test(model[1])
     #else:
-        model = PCB_test(model, num_parts=opt.parts, parts_ver=opt.PCB_Ver)
+        model = PCB_test(model, num_parts=opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+
 else:
     #if opt.fp16:
         #model[1].model.fc = nn.Sequential()
