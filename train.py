@@ -56,6 +56,8 @@ parser.add_argument('--use_ftnet', action='store_true', help='use ftnet')
 parser.add_argument('--use_siamese', action='store_true', help='use siamese')
 parser.add_argument('--use_NAS', action='store_true', help='use NAS')
 parser.add_argument('--PCB', action='store_true', help='use PCB+ResNet50')
+parser.add_argument('--RPP', action='store_true', help='use refined part pooling in PCB or not')
+parser.add_argument('--cluster', action='store_true', help='use cluster to partition feature maps in PCB')
 parser.add_argument('--warm_epoch', default=0, type=int, help='the first K epoch that needs warm up')
 parser.add_argument('--lr', default=0.05, type=float, help='learning rate')
 parser.add_argument('--droprate', default=0.5, type=float, help='drop rate')
@@ -65,7 +67,8 @@ parser.add_argument('--w', default=128, type=int, help='width')
 parser.add_argument('--pool', default='avg', type=str, help='pool avg')
 parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
 parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
-
+parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning in PCB')
+parser.add_argument('--no_induction', action='store_true', help='dont use induced training in PCB')
 
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory' )
 opt = parser.parse_args()
@@ -272,7 +275,7 @@ dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=opt.
                                              shuffle=True, num_workers=8, pin_memory=True) # 8 workers may work faster
               for x in ['train', 'val']}
 
-visualize_dataset_new(dataloaders)
+#visualize_dataset_new(dataloaders)
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 class_names = image_datasets['train'].classes
 
@@ -302,7 +305,7 @@ y_err['train'] = []
 y_err['val'] = []
 
 
-def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=25):
     since = time.time()
 
     # best_model_wts = model.state_dict()
@@ -398,9 +401,9 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             # deep copy the model
             if phase == 'val':
                 last_model_wts = model.state_dict()
-                if epoch % 10 == 9:
-                    save_network(model, epoch)
-                draw_curve(epoch)
+                if epoch % 10 == 9 or ((stage =='full' or stage =='rpp') and epoch % 10 == 4):
+                    save_network(model, epoch, stage)
+                draw_curve(epoch, stage)
 
         time_elapsed = time.time() - since
         print('Training complete in {:.0f}m {:.0f}s'.format(
@@ -426,7 +429,11 @@ ax0 = fig.add_subplot(121, title="loss")
 ax1 = fig.add_subplot(122, title="top1err")
 
 
-def draw_curve(current_epoch):
+def draw_curve(current_epoch, stage=None):
+    if stage:
+        filename='train_' + stage + '.jpg'
+    else:
+        filename='train.jpg'    
     x_epoch.append(current_epoch)
     ax0.plot(x_epoch, y_loss['train'], 'bo-', label='train')
     ax0.plot(x_epoch, y_loss['val'], 'ro-', label='val')
@@ -435,18 +442,24 @@ def draw_curve(current_epoch):
     if current_epoch == 0:
         ax0.legend()
         ax1.legend()
-    fig.savefig( os.path.join('./model',name,'train.jpg'))
+    
+    fig.savefig( os.path.join('./model',name, filename))
 
 ######################################################################
 # Save model
 # ---------------------------
 
 
-def save_network(network, epoch_label):
-    if isinstance(epoch_label, int):
-        save_filename = 'net_%03d.pth'% epoch_label
+def save_network(network, epoch_label, stage=None):
+    if stage:
+        netname='net_' + stage
     else:
-        save_filename = 'net_%s.pth'% epoch_label
+        netname='net'
+
+    if isinstance(epoch_label, int):
+        save_filename = netname + '_%03d.pth'% epoch_label
+    else:
+        save_filename = netname + '_%s.pth'% epoch_label
 
     save_path = os.path.join('./model', name, save_filename)
     torch.save(network.cpu().state_dict(), save_path)
@@ -470,13 +483,157 @@ def save_train_config_files():
     with open('%s/opts.yaml' % dir_name, 'w') as fp:
         yaml.dump(vars(opt), fp, default_flow_style=False)
 
+
+def pcb_train(model, criterion, stage, num_epoch):
+    ignored_params = list(map(id, model.model.fc.parameters()))
+    ignored_params += (list(map(id, model.classifier0.parameters()))
+                     + list(map(id, model.classifier1.parameters()))
+                     + list(map(id, model.classifier2.parameters()))
+                     + list(map(id, model.classifier3.parameters()))
+                     )
+    if opt.parts == 6:
+        ignored_params+= (list(map(id, model.classifier4.parameters()))
+                          + list(map(id, model.classifier5.parameters()))
+                          )
+
+    base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
+    if opt.parts == 6:
+        optimizer_ft = optim.SGD([
+            {'params': base_params, 'lr': 0.01},
+            {'params': model.model.fc.parameters(), 'lr': 0.1},
+            {'params': model.classifier0.parameters(), 'lr': 0.1},
+            {'params': model.classifier1.parameters(), 'lr': 0.1},
+            {'params': model.classifier2.parameters(), 'lr': 0.1},
+            {'params': model.classifier3.parameters(), 'lr': 0.1},
+            {'params': model.classifier4.parameters(), 'lr': 0.1},
+            {'params': model.classifier5.parameters(), 'lr': 0.1}
+        ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+    else:
+        optimizer_ft = optim.SGD([
+            {'params': base_params, 'lr': 0.01},
+            {'params': model.model.fc.parameters(), 'lr': 0.1},
+            {'params': model.classifier0.parameters(), 'lr': 0.1},
+            {'params': model.classifier1.parameters(), 'lr': 0.1},
+            {'params': model.classifier2.parameters(), 'lr': 0.1},
+            {'params': model.classifier3.parameters(), 'lr': 0.1}
+        ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+
+    # Decay LR by a factor of 0.1 every 40 epochs
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
+    model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
+                        stage=stage, num_epochs=num_epoch)
+    return model
+
+
+######################################################################
+# RPP train
+# ------------------
+# Setp 2&3: train the rpp layers
+# According to original paper, we set the learning rate at 0.01 for rpp layers.
+
+def rpp_train(model, criterion, stage, num_epoch):
+    if opt.no_induction:
+        ignored_params = list(map(id, model.model.fc.parameters()))
+        ignored_params += (list(map(id, model.classifier0.parameters()))
+                        + list(map(id, model.classifier1.parameters()))
+                        + list(map(id, model.classifier2.parameters()))
+                        + list(map(id, model.classifier3.parameters()))
+                        )
+        if opt.parts == 6:
+            ignored_params+= (list(map(id, model.classifier4.parameters()))
+                            + list(map(id, model.classifier5.parameters()))
+                            )
+
+        base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
+        if opt.parts == 6:
+            optimizer_ft = optim.SGD([
+                {'params': base_params, 'lr': 0.01},
+                {'params': model.model.fc.parameters(), 'lr': 0.1},
+                {'params': model.classifier0.parameters(), 'lr': 0.1},
+                {'params': model.classifier1.parameters(), 'lr': 0.1},
+                {'params': model.classifier2.parameters(), 'lr': 0.1},
+                {'params': model.classifier3.parameters(), 'lr': 0.1},
+                {'params': model.classifier4.parameters(), 'lr': 0.1},
+                {'params': model.classifier5.parameters(), 'lr': 0.1}
+            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+        else:
+            optimizer_ft = optim.SGD([
+                {'params': base_params, 'lr': 0.01},
+                {'params': model.model.fc.parameters(), 'lr': 0.1},
+                {'params': model.classifier0.parameters(), 'lr': 0.1},
+                {'params': model.classifier1.parameters(), 'lr': 0.1},
+                {'params': model.classifier2.parameters(), 'lr': 0.1},
+                {'params': model.classifier3.parameters(), 'lr': 0.1}
+            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+        # Decay LR by a factor of 0.1 every 100 epochs (never use)
+        exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
+        
+    else:
+        optimizer_ft = optim.SGD(model.avgpool.parameters(), lr=0.01,
+                              weight_decay=5e-4, momentum=0.9, nesterov=True)
+
+        # Decay LR by a factor of 0.1 every 100 epochs (never use)
+        exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=100, gamma=0.1)
+    
+    model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
+                        stage=stage, num_epochs=num_epoch)
+    return model
+
+######################################################################
+# full train
+# ------------------
+# Step 4: train the whole net
+# According to original paper, we set the difference learning rate for the whole net
+
+def full_train(model, criterion, stage, num_epoch):
+    ignored_params = list(map(id, model.model.fc.parameters()))
+    ignored_params += (list(map(id, model.classifier0.parameters()))
+                     + list(map(id, model.classifier1.parameters()))
+                     + list(map(id, model.classifier2.parameters()))
+                     + list(map(id, model.classifier3.parameters()))
+                     )
+    if opt.parts == 6:
+        ignored_params+= (list(map(id, model.classifier4.parameters()))
+                          + list(map(id, model.classifier5.parameters()))
+                          )
+    ignored_params += list(map(id, model.avgpool.parameters()))
+
+    base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
+    
+    if opt.parts == 6:
+        optimizer_ft = optim.SGD([
+            {'params': base_params, 'lr': 0.001},
+            {'params': model.model.fc.parameters(), 'lr': 0.01},
+            {'params': model.classifier0.parameters(), 'lr': 0.01},
+            {'params': model.classifier1.parameters(), 'lr': 0.01},
+            {'params': model.classifier2.parameters(), 'lr': 0.01},
+            {'params': model.classifier3.parameters(), 'lr': 0.01},
+            {'params': model.classifier4.parameters(), 'lr': 0.01},
+            {'params': model.classifier5.parameters(), 'lr': 0.01},
+            {'params': model.avgpool.parameters(), 'lr': 0.01},
+        ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+    else:
+        optimizer_ft = optim.SGD([
+            {'params': base_params, 'lr': 0.001},
+            {'params': model.model.fc.parameters(), 'lr': 0.01},
+            {'params': model.classifier0.parameters(), 'lr': 0.01},
+            {'params': model.classifier1.parameters(), 'lr': 0.01},
+            {'params': model.classifier2.parameters(), 'lr': 0.01},
+            {'params': model.classifier3.parameters(), 'lr': 0.01},
+            {'params': model.avgpool.parameters(), 'lr': 0.01},
+        ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+    # Decay LR by a factor of 0.1 every 100 epochs (never use)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=100, gamma=0.1)
+    model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
+                        stage=stage, num_epochs=num_epoch)
+    return model
+
 ######################################################################
 # Finetuning the convnet
 # ----------------------
 #
 # Load a pretrainied model and reset final fully connected layer.
 #
-
 
 if not opt.resume:
     if opt.use_dense:
@@ -485,19 +642,13 @@ if not opt.resume:
         model = ft_net_NAS(len(class_names), opt.droprate)
     else:
         model = ft_net(len(class_names), opt.droprate, opt.stride)
-
-    if opt.PCB:
-        model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver)
+    
 
 
-if opt.use_siamese:
-    save_train_config_files()
-    train_siamese_network(len(class_names), fp16, data_transforms['train'], opt.batchsize, opt.epochs)
-    exit()
-
+save_train_config_files()
+criterion = nn.CrossEntropyLoss()
 
 opt.nclasses = len(class_names)
-print(model)
 
 if start_epoch >= 40:
     opt.lr = opt.lr*0.1
@@ -509,60 +660,56 @@ if not opt.PCB:
              {'params': base_params, 'lr': 0.1*opt.lr},
              {'params': model.classifier.parameters(), 'lr': opt.lr}
          ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+
+    # Decay LR by a factor of 0.1 every 40 epochs
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
+
+if opt.PCB or opt.RPP:
+    
+    # step1: PCB training #
+    if not opt.no_induction:
+        print("STARTING STEP 1 OF PCB:")
+        stage='pcb'
+        model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+        model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
+        model = model.cuda()
+        print(model)
+        #model = pcb_train(model, criterion, stage, opt.epochs)
+
+    # step2&3: RPP training #
+    if opt.RPP:
+        print("STARTING STEP 2 AND 3 OF PCB:")
+        stage='rpp'
+        epochs = 5
+        if opt.no_induction:
+            model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+            epochs = opt.epochs
+        
+        if opt.cluster:
+            model=model.convert_to_rpp_cluster()
+        else:
+            model=model.convert_to_rpp()
+
+        model=model.cuda()
+        print(model)
+        model=rpp_train(model,criterion,stage,epochs)
+        
+        # step4: whole net training #
+        print("STARTING STEP 4 OF PCB:")
+        stage = 'full'
+        full_train(model, criterion, stage, 10)
+    
+        
 else:
-    ignored_params = list(map(id, model.model.fc.parameters()))
-    ignored_params += (list(map(id, model.classifier0.parameters()))
-                     + list(map(id, model.classifier1.parameters()))
-                     + list(map(id, model.classifier2.parameters()))
-                     + list(map(id, model.classifier3.parameters()))
-                     )
-    if opt.parts == 6:
-        ignored_params+= (list(map(id, model.classifier4.parameters()))
-                          + list(map(id, model.classifier5.parameters()))
-                          )
-    base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
+    # model to gpu
+    model = model.cuda()
+    print(model)
+    if fp16:
+        #model = network_to_half(model)
+        #optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
+        model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level = "O1")
 
-    if opt.parts == 6:
-        optimizer_ft = optim.SGD([
-                {'params': base_params, 'lr': 0.1*opt.lr},
-                {'params': model.model.fc.parameters(), 'lr': opt.lr},
-                {'params': model.classifier0.parameters(), 'lr': opt.lr},
-                {'params': model.classifier1.parameters(), 'lr': opt.lr},
-                {'params': model.classifier2.parameters(), 'lr': opt.lr},
-                {'params': model.classifier3.parameters(), 'lr': opt.lr},
-                {'params': model.classifier4.parameters(), 'lr': opt.lr},
-                {'params': model.classifier5.parameters(), 'lr': opt.lr}
-            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
-    else:
-        optimizer_ft = optim.SGD([
-                {'params': base_params, 'lr': 0.1*opt.lr},
-                {'params': model.model.fc.parameters(), 'lr': opt.lr},
-                {'params': model.classifier0.parameters(), 'lr': opt.lr},
-                {'params': model.classifier1.parameters(), 'lr': opt.lr},
-                {'params': model.classifier2.parameters(), 'lr': opt.lr},
-                {'params': model.classifier3.parameters(), 'lr': opt.lr}
-            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
 
-# Decay LR by a factor of 0.1 every 40 epochs
-exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
-
-######################################################################
-# Train and evaluate
-# ^^^^^^^^^^^^^^^^^^
-#
-# It should take around 1-2 hours on GPU.
-#
-save_train_config_files()
-
-# model to gpu
-model = model.cuda()
-if fp16:
-    #model = network_to_half(model)
-    #optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
-    model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level = "O1")
-
-criterion = nn.CrossEntropyLoss()
-
-model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=opt.epochs)
+    model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
+                        num_epochs=opt.epochs)
 
