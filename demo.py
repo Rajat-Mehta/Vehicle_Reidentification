@@ -15,7 +15,17 @@ parser = argparse.ArgumentParser(description='Demo')
 parser.add_argument('--query_index', default=777, type=int, help='test_image_index')
 parser.add_argument('--use_siamese', action='store_true', help='use siamese')
 parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch',type=str, help='./test_data')
+parser.add_argument('--PCB', action='store_true', help='use PCB')
+parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
+
 opts = parser.parse_args()
+
+if opts.use_ftnet:
+    name = "ft_ResNet"
+elif opts.use_siamese:
+    name = "siamese"
+elif opts.PCB:
+    name = "ft_ResNet_PCB"
 
 data_dir = opts.test_dir
 image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir, x) ) for x in ['gallery','query']}
@@ -31,10 +41,8 @@ def imshow(path, title=None):
     plt.pause(0.001)  # pause a bit so that plots are updated
 
 ######################################################################
-if opts.use_siamese:
-    result = scipy.io.loadmat('./model/siamese/pytorch_result_VeRi.mat')
-else:
-    result = scipy.io.loadmat('./model/ft_ResNet/pytorch_result_VeRi.mat')
+result = scipy.io.loadmat(os.path.join('./model', name, 'pytorch_result_VeRi.mat'))
+
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
@@ -125,4 +133,4 @@ except RuntimeError:
         print(img_path[0])
     print('If you want to see the visualization of the ranking result, graphical user interface is needed.')
 
-fig.savefig("show.png")
+fig.savefig("demo.png")
