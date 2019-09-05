@@ -58,7 +58,7 @@ if opt.use_ftnet:
 elif opt.use_siamese:
     name = "siamese"
 elif opt.PCB:
-    name = "ft_ResNet_PCB/pcb_rpp"
+    name = "ft_ResNet_PCB/CB_8_horizontal"
 
 opt.nclasses = 575
 
@@ -202,8 +202,8 @@ def extract_feature(model, dataloaders):
         if opt.PCB and not opt.CB:
             ff = torch.FloatTensor(n,2048,opt.parts).zero_() # we have six parts
         elif opt.PCB and opt.CB:
-            ff = torch.FloatTensor(n,2048,opt.parts/2, 2).zero_() # we have six parts
-
+            ff = torch.FloatTensor(n,2048,int(opt.parts/2), 2).zero_() # we have six parts
+        
         for i in range(2):
             if(i==1):
                 img = fliplr(img)
@@ -211,6 +211,8 @@ def extract_feature(model, dataloaders):
             #if opt.fp16:
             #    input_img = input_img.half()
             outputs = model(input_img) 
+            print(outputs.shape)
+            exit()
             f = outputs.data.cpu().float()
             ff = ff+f
         # norm feature
