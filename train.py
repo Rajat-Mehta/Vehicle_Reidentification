@@ -88,7 +88,7 @@ elif opt.use_siamese:
 elif opt.use_NAS:
     name = "ft_net_NAS"
 elif opt.PCB:
-    name = "ft_ResNet_PCB"
+    name = "ft_ResNet_PCB/CB_8_horizontal"
 elif opt.use_ftnet:
     name = "ft_ResNet"
 
@@ -361,6 +361,8 @@ def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=2
                         part[i] = outputs[i]
                     if num_part == 6:
                         score = sm(part[0]) + sm(part[1]) + sm(part[2]) + sm(part[3]) + sm(part[4]) + sm(part[5])
+                    elif num_part == 8:
+                        score = sm(part[0]) + sm(part[1]) + sm(part[2]) + sm(part[3]) + sm(part[4]) + sm(part[5]) + sm(part[6]) + sm(part[7])
                     else:
                         score = sm(part[0]) + sm(part[1]) + sm(part[2]) + sm(part[3])
                     _, preds = torch.max(score.data, 1)
@@ -451,7 +453,7 @@ def draw_curve(current_epoch, stage=None):
 
 
 def save_network(network, epoch_label, stage=None):
-    if stage:
+    if opt.RPP:
         netname='net_' + stage
     else:
         netname='net'
@@ -495,6 +497,12 @@ def pcb_train(model, criterion, stage, num_epoch):
         ignored_params+= (list(map(id, model.classifier4.parameters()))
                           + list(map(id, model.classifier5.parameters()))
                           )
+    if opt.parts == 8:
+        ignored_params+= (list(map(id, model.classifier4.parameters()))
+                          + list(map(id, model.classifier5.parameters()))
+                          + list(map(id, model.classifier6.parameters()))
+                          + list(map(id, model.classifier7.parameters()))
+                          )
 
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
     if opt.parts == 6:
@@ -507,6 +515,19 @@ def pcb_train(model, criterion, stage, num_epoch):
             {'params': model.classifier3.parameters(), 'lr': 0.1},
             {'params': model.classifier4.parameters(), 'lr': 0.1},
             {'params': model.classifier5.parameters(), 'lr': 0.1}
+        ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+    elif opt.parts == 8:
+        optimizer_ft = optim.SGD([
+            {'params': base_params, 'lr': 0.01},
+            {'params': model.model.fc.parameters(), 'lr': 0.1},
+            {'params': model.classifier0.parameters(), 'lr': 0.1},
+            {'params': model.classifier1.parameters(), 'lr': 0.1},
+            {'params': model.classifier2.parameters(), 'lr': 0.1},
+            {'params': model.classifier3.parameters(), 'lr': 0.1},
+            {'params': model.classifier4.parameters(), 'lr': 0.1},
+            {'params': model.classifier5.parameters(), 'lr': 0.1},
+            {'params': model.classifier6.parameters(), 'lr': 0.1},
+            {'params': model.classifier7.parameters(), 'lr': 0.1}
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     else:
         optimizer_ft = optim.SGD([
@@ -543,6 +564,12 @@ def rpp_train(model, criterion, stage, num_epoch):
             ignored_params+= (list(map(id, model.classifier4.parameters()))
                             + list(map(id, model.classifier5.parameters()))
                             )
+        elif opt.parts == 8:
+            ignored_params+= (list(map(id, model.classifier4.parameters()))
+                            + list(map(id, model.classifier5.parameters()))
+                            + list(map(id, model.classifier6.parameters()))
+                            + list(map(id, model.classifier7.parameters()))
+                            )
 
         base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
         if opt.parts == 6:
@@ -556,6 +583,20 @@ def rpp_train(model, criterion, stage, num_epoch):
                 {'params': model.classifier4.parameters(), 'lr': 0.1},
                 {'params': model.classifier5.parameters(), 'lr': 0.1}
             ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+        elif opt.parts == 8:
+            optimizer_ft = optim.SGD([
+                {'params': base_params, 'lr': 0.01},
+                {'params': model.model.fc.parameters(), 'lr': 0.1},
+                {'params': model.classifier0.parameters(), 'lr': 0.1},
+                {'params': model.classifier1.parameters(), 'lr': 0.1},
+                {'params': model.classifier2.parameters(), 'lr': 0.1},
+                {'params': model.classifier3.parameters(), 'lr': 0.1},
+                {'params': model.classifier4.parameters(), 'lr': 0.1},
+                {'params': model.classifier5.parameters(), 'lr': 0.1},
+                {'params': model.classifier6.parameters(), 'lr': 0.1},
+                {'params': model.classifier7.parameters(), 'lr': 0.1}
+            ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+        
         else:
             optimizer_ft = optim.SGD([
                 {'params': base_params, 'lr': 0.01},
@@ -596,6 +637,12 @@ def full_train(model, criterion, stage, num_epoch):
         ignored_params+= (list(map(id, model.classifier4.parameters()))
                           + list(map(id, model.classifier5.parameters()))
                           )
+    elif opt.parts == 8:
+            ignored_params+= (list(map(id, model.classifier4.parameters()))
+                            + list(map(id, model.classifier5.parameters()))
+                            + list(map(id, model.classifier6.parameters()))
+                            + list(map(id, model.classifier7.parameters()))
+                            )
     ignored_params += list(map(id, model.avgpool.parameters()))
 
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
@@ -611,6 +658,19 @@ def full_train(model, criterion, stage, num_epoch):
             {'params': model.classifier4.parameters(), 'lr': 0.01},
             {'params': model.classifier5.parameters(), 'lr': 0.01},
             {'params': model.avgpool.parameters(), 'lr': 0.01},
+        ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+    elif opt.parts == 8:
+        optimizer_ft = optim.SGD([
+            {'params': base_params, 'lr': 0.01},
+            {'params': model.model.fc.parameters(), 'lr': 0.1},
+            {'params': model.classifier0.parameters(), 'lr': 0.1},
+            {'params': model.classifier1.parameters(), 'lr': 0.1},
+            {'params': model.classifier2.parameters(), 'lr': 0.1},
+            {'params': model.classifier3.parameters(), 'lr': 0.1},
+            {'params': model.classifier4.parameters(), 'lr': 0.1},
+            {'params': model.classifier5.parameters(), 'lr': 0.1},
+            {'params': model.classifier6.parameters(), 'lr': 0.1},
+            {'params': model.classifier7.parameters(), 'lr': 0.1}
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     else:
         optimizer_ft = optim.SGD([
@@ -671,10 +731,10 @@ if opt.PCB or opt.RPP:
         print("STARTING STEP 1 OF PCB:")
         stage='pcb'
         model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
-        model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
+        #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
         model = model.cuda()
         print(model)
-        #model = pcb_train(model, criterion, stage, opt.epochs)
+        model = pcb_train(model, criterion, stage, opt.epochs)
 
     # step2&3: RPP training #
     if opt.RPP:
