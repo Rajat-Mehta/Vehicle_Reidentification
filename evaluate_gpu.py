@@ -8,6 +8,7 @@ import argparse
 import torch.nn.functional as F
 
 parser = argparse.ArgumentParser(description='Evaluate')
+parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--use_siamese',  action='store_true', help='evaluate siamese or not')
 parser.add_argument('--keep_num',  default=100, help='how many images to keep from other cameras')
 parser.add_argument('--use_single_camera',  action='store_true', help='use single camera gallery images')
@@ -25,12 +26,23 @@ if opts.use_siamese:
 elif opts.siamese_PCB:
     name = 'siamese_PCB'
 elif opts.PCB:
-    name = 'ft_ResNet_PCB'
+    name = "ft_ResNet_PCB/part8_CB"
 elif opts.fusion:
     name = 'fusion'
 else:
     name = 'ft_ResNet'
 
+str_ids = opts.gpu_ids.split(',')
+gpu_ids = []
+for str_id in str_ids:
+    id = int(str_id)
+    if id >=0:
+        gpu_ids.append(id)
+
+# set gpu ids
+if len(gpu_ids)>0:
+    torch.cuda.set_device(gpu_ids[0])
+    #cudnn.benchmark = True
 
 def evaluate_single_camera(qf, ql, qc, gf, gl, gc):
     query = qf.view(-1, 1)
