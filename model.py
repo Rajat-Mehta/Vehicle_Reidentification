@@ -6,19 +6,23 @@ from torch.autograd import Variable
 import pretrainedmodels
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
+from kmeans_pytorch.kmeans import lloyd
+import numpy as np
+
 
 ######################################################################
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
     # print(classname)
     if classname.find('Conv') != -1:
-        init.kaiming_normal_(m.weight.data, a=0, mode='fan_in') # For old pytorch, you may use kaiming_normal.
+        init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')  # For old pytorch, you may use kaiming_normal.
     elif classname.find('Linear') != -1:
         init.kaiming_normal_(m.weight.data, a=0, mode='fan_out')
         init.constant_(m.bias.data, 0.0)
     elif classname.find('BatchNorm1d') != -1:
         init.normal_(m.weight.data, 1.0, 0.02)
         init.constant_(m.bias.data, 0.0)
+
 
 def weights_init_classifier(m):
     classname = m.__class__.__name__
@@ -31,8 +35,8 @@ class ClassBlock_Siamese(nn.Module):
     def __init__(self, input_dim, class_num, dropout=False, relu=False, num_bottleneck=512):
         super(ClassBlock_Siamese, self).__init__()
         add_block = []
-        #add_block += [nn.Linear(input_dim, num_bottleneck)]
-        num_bottleneck=input_dim
+        # add_block += [nn.Linear(input_dim, num_bottleneck)]
+        num_bottleneck = input_dim
         add_block += [nn.BatchNorm1d(num_bottleneck)]
         if relu:
             add_block += [nn.LeakyReLU(0.1)]
@@ -48,26 +52,29 @@ class ClassBlock_Siamese(nn.Module):
 
         self.add_block = add_block
         self.classifier = classifier
+
     def forward(self, x):
         f = self.add_block(x)
         f_norm = f.norm(p=2, dim=1, keepdim=True) + 1e-8
         f = f.div(f_norm)
         x = self.classifier(f)
-        return x,f
+        return x, f
+
 
 # Define the ResNet50-based Model
 class ft_net_siamese(nn.Module):
 
-    def __init__(self, class_num ):
+    def __init__(self, class_num):
         super(ft_net_siamese, self).__init__()
         model_ft = models.resnet50(pretrained=True)
         # avg pooling to global pooling
-        model_ft.avgpool = nn.AdaptiveAvgPool2d((1,1))
+        model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.model = model_ft
         self.classifier = ClassBlock_Siamese(2048, class_num, dropout=False, relu=False)
         # remove the final downsample
         # self.model.layer4[0].downsample[0].stride = (1,1)
         # self.model.layer4[0].conv2.stride = (1,1)
+
     def forward(self, x):
         x = self.model.conv1(x)
         x = self.model.bn1(x)
@@ -79,13 +86,15 @@ class ft_net_siamese(nn.Module):
         x = self.model.layer4(x)
         x = self.model.avgpool(x)
         x = torch.squeeze(x)
-        x,f = self.classifier(x)
-        return x,f
+        x, f = self.classifier(x)
+        return x, f
+
 
 # Defines the new fc layer and classification layer
 # |--Linear--|--bn--|--relu--|--Linear--|
 class ClassBlock(nn.Module):
-    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=512, linear=True, return_f = False):
+    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=512, linear=True,
+                 return_f=False):
         super(ClassBlock, self).__init__()
         self.return_f = return_f
         add_block = []
@@ -97,7 +106,7 @@ class ClassBlock(nn.Module):
             add_block += [nn.BatchNorm1d(num_bottleneck)]
         if relu:
             add_block += [nn.LeakyReLU(0.1)]
-        if droprate>0:
+        if droprate > 0:
             add_block += [nn.Dropout(p=droprate)]
         add_block = nn.Sequential(*add_block)
         add_block.apply(weights_init_kaiming)
@@ -109,6 +118,7 @@ class ClassBlock(nn.Module):
 
         self.add_block = add_block
         self.classifier = classifier
+
     def forward(self, x):
         x = self.add_block(x)
         if self.return_f:
@@ -223,10 +233,9 @@ class ContrastiveLoss(torch.nn.Module):
         self.margin = margin
 
     def forward(self, output1, output2, label):
-        euclidean_distance = F.pairwise_distance(output1, output2, keepdim = True)
-        loss_contrastive = torch.mean((1-label) * torch.pow(euclidean_distance, 2) +
+        euclidean_distance = F.pairwise_distance(output1, output2, keepdim=True)
+        loss_contrastive = torch.mean((1 - label) * torch.pow(euclidean_distance, 2) +
                                       (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
-
 
         return loss_contrastive
 
@@ -235,7 +244,7 @@ class ContrastiveLoss(torch.nn.Module):
 # Define the ResNet50-based Model
 class ft_net(nn.Module):
 
-    def __init__(self, class_num, droprate=0.5, stride=2, init_model=None, pool='avg', 
+    def __init__(self, class_num, droprate=0.5, stride=2, init_model=None, pool='avg',
                  num_bottleneck=512, return_f=False, linear=True):
         super(ft_net, self).__init__()
         model_ft = models.resnet50(pretrained=True)
@@ -253,8 +262,8 @@ class ft_net(nn.Module):
         elif pool == 'avg':
             model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.model = model_ft
-            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear, 
-                                        return_f=return_f, num_bottleneck=num_bottleneck)
+            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear,
+                                         return_f=return_f, num_bottleneck=num_bottleneck)
 
         if init_model != None:
             self.model = init_model.model
@@ -360,19 +369,19 @@ class ft_net_middle(nn.Module):
 class PCB(nn.Module):
     def __init__(self, class_num, return_f=False, num_bottleneck=256, num_parts=6, parts_ver=1, checkerboard=False):
         super(PCB, self).__init__()
-        #self.in_features = 2048
-        self.return_f=return_f
+        # self.in_features = 2048
+        self.return_f = return_f
         self.part = num_parts  # We cut the pool5 to 6 parts
         self.parts_ver = parts_ver
         self.checkerboard = checkerboard
 
         if self.parts_ver == 1:
-            pool_size=(self.part, 1)
+            pool_size = (self.part, 1)
         elif self.parts_ver == 0:
-            pool_size=(1, self.part)
-        
+            pool_size = (1, self.part)
+
         if self.checkerboard:
-            pool_size=(int(num_parts/2),2)
+            pool_size = (int(num_parts / 2), 2)
 
         model_ft = models.resnet50(pretrained=True)
         self.model = model_ft
@@ -382,12 +391,12 @@ class PCB(nn.Module):
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
-        
+
         # define classifiers
         for i in range(num_parts):
             name = 'classifier' + str(i)
-            setattr(self, name, ClassBlock(2048, class_num, droprate=0.5, relu=False, bnorm=True, 
-                    num_bottleneck=num_bottleneck, return_f=return_f))
+            setattr(self, name, ClassBlock(2048, class_num, droprate=0.5, relu=False, bnorm=True,
+                                           num_bottleneck=num_bottleneck, return_f=return_f))
 
     def forward(self, x):
         x = self.model.conv1(x)
@@ -399,7 +408,7 @@ class PCB(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
         x = self.avgpool(x)
-        #x = self.conv11(x)
+        # x = self.conv11(x)
         x = self.dropout(x)
         part = {}
         predict = {}
@@ -407,13 +416,13 @@ class PCB(nn.Module):
         if self.checkerboard:
             # get checkerboard feature maps
             k = 0
-            for i in range(int(self.part/2)):
+            for i in range(int(self.part / 2)):
                 for j in range(2):
                     part[k] = torch.squeeze(x[:, :, i, j])
                     name = 'classifier' + str(k)
                     c = getattr(self, name)
                     predict[k] = c(part[k])
-                    k+=1
+                    k += 1
         else:
             # get six part feature batchsize*2048*6
             for i in range(self.part):
@@ -421,7 +430,7 @@ class PCB(nn.Module):
                     part[i] = torch.squeeze(x[:, :, i])
                 elif self.parts_ver == 0:
                     part[i] = torch.squeeze(x[:, :, :, i])
-                
+
                 name = 'classifier' + str(i)
                 c = getattr(self, name)
                 predict[i] = c(part[i])
@@ -434,7 +443,7 @@ class PCB(nn.Module):
         if not self.return_f:
             y = []
             for i in range(0, self.part):
-                y.append(predict[i])  
+                y.append(predict[i])
             return y
         else:
             conc = predict[0]
@@ -445,18 +454,19 @@ class PCB(nn.Module):
     def convert_to_rpp(self):
         self.avgpool = RPP(self.part)
         return self
-    
+
     def convert_to_rpp_cluster(self):
         self.avgpool = Cluster(self.part)
         return self
 
+
 # Define the RPP layers
 class RPP(nn.Module):
-    def __init__(self,num_parts):
+    def __init__(self, num_parts):
         super(RPP, self).__init__()
         self.part = num_parts
         add_block = []
-        #add_block += [nn.Linear(2048, self.part)]
+        # add_block += [nn.Linear(2048, self.part)]
 
         add_block += [nn.Conv2d(2048, self.part, kernel_size=1, bias=False)]
         add_block = nn.Sequential(*add_block)
@@ -474,11 +484,10 @@ class RPP(nn.Module):
         self.softmax = nn.Softmax(dim=1)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-
     def forward(self, x):
         w = self.add_block(x)
         p = self.softmax(w)
-        
+
         y = []
         for i in range(self.part):
             p_i = p[:, i, :, :]
@@ -498,25 +507,28 @@ class Cluster(nn.Module):
         super(Cluster, self).__init__()
         self.part = num_parts
         self.kmeans = KMeans(n_clusters=self.part)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-
 
     def forward(self, x):
-        w = self.kmeans.fit(x)
-        p = self.softmax(w)
-        
-        y = []
-        for i in range(self.part):
-            p_i = p[:, i, :, :]
-            p_i = torch.unsqueeze(p_i, 1)
-            y_i = torch.mul(x, p_i)
-            y_i = self.norm_block(y_i)
-            y_i = self.avgpool(y_i)
-            y.append(y_i)
+        # print(x.shape)
+        x = x.view(x.shape[0], x.shape[1], -1)
+        # print(x.shape)
+        x = x.permute(0, 2, 1)
+        # print(x.shape)
+        clus = torch.FloatTensor()
 
-        f = torch.cat(y, 2)
+        for i in range(x.shape[0]):
+            # lloyd(X, n_clusters, device=0, tol=1e-4)
+            clusters_index, centers = lloyd(x[i].cpu().detach().numpy(), self.part, device=0, tol=1e-4)
+            cent = centers
 
-        return f
+            #self.kmeans.fit(x[i].cpu().detach().numpy())
+            #cent = self.kmeans.cluster_centers_
+            cent = torch.from_numpy(cent).float()
+            cent = cent.permute(1, 0)
+            cent.unsqueeze_(0)
+            clus = torch.cat((clus, cent), 0)
+        clus.unsqueeze_(3)
+        return clus.cuda()
 
 
 class PCB_test(nn.Module):
@@ -524,17 +536,16 @@ class PCB_test(nn.Module):
         super(PCB_test, self).__init__()
         self.part = num_parts
         self.model = model.model
-        self.parts_ver=parts_ver
+        self.parts_ver = parts_ver
         self.checkerboard = checkerboard
 
         if self.parts_ver == 1:
-            pool_size=(self.part, 1)
+            pool_size = (self.part, 1)
         elif self.parts_ver == 0:
-            pool_size=(1, self.part)
-        
-        if self.checkerboard:
-            pool_size=(int(num_parts/2),2)
+            pool_size = (1, self.part)
 
+        if self.checkerboard:
+            pool_size = (int(num_parts / 2), 2)
 
         self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
         # remove the final downsample
@@ -554,14 +565,15 @@ class PCB_test(nn.Module):
 
         if self.checkerboard:
             y = x.view(x.size(0), x.size(1), self.part)
-        
+
         else:
             if self.parts_ver == 1:
                 y = x.view(x.size(0), x.size(1), x.size(2))
             elif self.parts_ver == 0:
                 y = x.view(x.size(0), x.size(1), x.size(3))
-        
+
         return y
+
 
 '''
 # debug model structure

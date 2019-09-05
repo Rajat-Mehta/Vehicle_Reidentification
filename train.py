@@ -57,7 +57,7 @@ parser.add_argument('--use_siamese', action='store_true', help='use siamese')
 parser.add_argument('--use_NAS', action='store_true', help='use NAS')
 parser.add_argument('--PCB', action='store_true', help='use PCB+ResNet50')
 parser.add_argument('--RPP', action='store_true', help='use refined part pooling in PCB or not')
-parser.add_argument('--cluster', action='store_true', help='use cluster to partition feature maps in PCB')
+parser.add_argument('--cluster', action='store_true', help='use k means clustering to partition feature maps in PCB')
 parser.add_argument('--warm_epoch', default=0, type=int, help='the first K epoch that needs warm up')
 parser.add_argument('--lr', default=0.05, type=float, help='learning rate')
 parser.add_argument('--droprate', default=0.5, type=float, help='drop rate')
@@ -69,8 +69,8 @@ parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB
 parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
 parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning in PCB')
 parser.add_argument('--no_induction', action='store_true', help='dont use induced training in PCB')
+parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory')
 
-parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory' )
 opt = parser.parse_args()
 
 fp16 = opt.fp16
@@ -642,7 +642,7 @@ if not opt.resume:
         model = ft_net_NAS(len(class_names), opt.droprate)
     else:
         model = ft_net(len(class_names), opt.droprate, opt.stride)
-    
+
 
 
 save_train_config_files()
@@ -651,64 +651,64 @@ criterion = nn.CrossEntropyLoss()
 opt.nclasses = len(class_names)
 
 if start_epoch >= 40:
-    opt.lr = opt.lr*0.1
+    opt.lr = opt.lr * 0.1
 
 if not opt.PCB:
-    ignored_params = list(map(id, model.classifier.parameters() ))
+    ignored_params = list(map(id, model.classifier.parameters()))
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
     optimizer_ft = optim.SGD([
-             {'params': base_params, 'lr': 0.1*opt.lr},
-             {'params': model.classifier.parameters(), 'lr': opt.lr}
-         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
+        {'params': base_params, 'lr': 0.1 * opt.lr},
+        {'params': model.classifier.parameters(), 'lr': opt.lr}
+    ], weight_decay=5e-4, momentum=0.9, nesterov=True)
 
     # Decay LR by a factor of 0.1 every 40 epochs
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
 
 if opt.PCB or opt.RPP:
-    
+
     # step1: PCB training #
     if not opt.no_induction:
         print("STARTING STEP 1 OF PCB:")
-        stage='pcb'
-        model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
-        model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
+        stage = 'pcb'
+        model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                    checkerboard=opt.CB)
+        # model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
+        if opt.cluster:
+            model = model.convert_to_rpp_cluster()
         model = model.cuda()
         print(model)
-        #model = pcb_train(model, criterion, stage, opt.epochs)
+        model = pcb_train(model, criterion, stage, opt.epochs)
 
     # step2&3: RPP training #
     if opt.RPP:
         print("STARTING STEP 2 AND 3 OF PCB:")
-        stage='rpp'
+        stage = 'rpp'
         epochs = 5
         if opt.no_induction:
-            model = PCB(len(class_names), num_bottleneck=256, num_parts = opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB)
             epochs = opt.epochs
-        
-        if opt.cluster:
-            model=model.convert_to_rpp_cluster()
-        else:
-            model=model.convert_to_rpp()
 
-        model=model.cuda()
+        model = model.convert_to_rpp()
+
+        model = model.cuda()
         print(model)
-        model=rpp_train(model,criterion,stage,epochs)
-        
+        model = rpp_train(model, criterion, stage, epochs)
+
         # step4: whole net training #
         print("STARTING STEP 4 OF PCB:")
         stage = 'full'
         full_train(model, criterion, stage, 10)
-    
-        
+
+
 else:
     # model to gpu
     model = model.cuda()
     print(model)
     if fp16:
-        #model = network_to_half(model)
-        #optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
-        model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level = "O1")
-
+        # model = network_to_half(model)
+        # optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
+        model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level="O1")
 
     model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
                         num_epochs=opt.epochs)
