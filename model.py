@@ -562,15 +562,7 @@ class PCB_test(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
         x = self.avgpool(x)
-
-        if self.checkerboard:
-            y = x.view(x.size(0), x.size(1), self.part)
-
-        else:
-            if self.parts_ver == 1:
-                y = x.view(x.size(0), x.size(1), x.size(2))
-            elif self.parts_ver == 0:
-                y = x.view(x.size(0), x.size(1), x.size(3))
+        y = x.view(x.size(0), x.size(1), self.part)
 
         return y
 

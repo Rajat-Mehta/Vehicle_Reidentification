@@ -26,7 +26,7 @@ if opts.use_siamese:
 elif opts.siamese_PCB:
     name = 'siamese_PCB'
 elif opts.PCB:
-    name = "ft_ResNet_PCB/part8_CB"
+    name = "ft_ResNet_PCB"
 elif opts.fusion:
     name = 'fusion'
 else:
