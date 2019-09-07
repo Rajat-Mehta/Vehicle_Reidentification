@@ -44,6 +44,7 @@ parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
 parser.add_argument('--multi', action='store_true', help='use multiple query')
 parser.add_argument('--fp16', action='store_true', help='use fp16.')
 parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning or not.')
+parser.add_argument('--mixed', action='store_true', help='use mixed partitioning or not.')
 
 opt = parser.parse_args()
 ### load config ###
@@ -58,7 +59,7 @@ if opt.use_ftnet:
 elif opt.use_siamese:
     name = "siamese"
 elif opt.PCB:
-    name = "ft_ResNet_PCB/CB_8_horizontal"
+    name = "ft_ResNet_PCB"
 
 opt.nclasses = 575
 
@@ -139,13 +140,6 @@ else:
     ]
 data_transforms = transforms.Compose(trans)
 
-if opt.PCB:
-    data_transforms = transforms.Compose([
-        transforms.Resize((h, w), interpolation=3),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) 
-    ])
-
 print(data_transforms)
 data_dir = test_dir
 
@@ -189,42 +183,66 @@ def fliplr(img):
     return img_flip
 
 
+def get_features(model, img, label):
+    n, c, h, w = img.size()
+    ff = torch.FloatTensor(n,512).zero_()
+
+    if opt.PCB:
+        ff = torch.FloatTensor(n,2048,opt.parts).zero_() # we have six parts
+
+    for i in range(2):
+        if(i==1):
+            img = fliplr(img)
+        input_img = Variable(img.cuda())
+        #if opt.fp16:
+        #    input_img = input_img.half()
+        outputs = model(input_img) 
+        f = outputs.data.cpu().float()
+        ff = ff+f
+    # norm feature
+    if opt.PCB:
+        # feature size (n,2048,6)
+        # 1. To treat every part equally, I calculate the norm for every 2048-dim part feature.
+        # 2. To keep the cosine score==1, sqrt(6) is added to norm the whole feature (2048*6).
+        fnorm = torch.norm(ff, p=2, dim=1, keepdim=True) * np.sqrt(opt.parts) 
+        ff = ff.div(fnorm.expand_as(ff))
+        ff = ff.view(ff.size(0), -1)
+    else:
+        fnorm = torch.norm(ff, p=2, dim=1, keepdim=True)
+        ff = ff.div(fnorm.expand_as(ff))
+
+    return ff
+    
+
 def extract_feature(model, dataloaders):
-    features = torch.FloatTensor()
+    features_final = torch.FloatTensor()
     count = 0
     for data in dataloaders:
         img, label = data
         n, c, h, w = img.size()
         count += n
-        print(count)
-        ff = torch.FloatTensor(n,512).zero_()
+        #print(count)
 
-        if opt.PCB:
-            ff = torch.FloatTensor(n,2048,opt.parts).zero_() # we have six parts
-        
-        for i in range(2):
-            if(i==1):
-                img = fliplr(img)
-            input_img = Variable(img.cuda())
-            #if opt.fp16:
-            #    input_img = input_img.half()
-            outputs = model(input_img) 
-            f = outputs.data.cpu().float()
-            ff = ff+f
-        # norm feature
-        if opt.PCB:
-            # feature size (n,2048,6)
-            # 1. To treat every part equally, I calculate the norm for every 2048-dim part feature.
-            # 2. To keep the cosine score==1, sqrt(6) is added to norm the whole feature (2048*6).
-            fnorm = torch.norm(ff, p=2, dim=1, keepdim=True) * np.sqrt(opt.parts) 
-            ff = ff.div(fnorm.expand_as(ff))
-            ff = ff.view(ff.size(0), -1)
-        else:
-            fnorm = torch.norm(ff, p=2, dim=1, keepdim=True)
-            ff = ff.div(fnorm.expand_as(ff))
+        features = get_features(model, img, label)
+        #print(features.shape)
 
-        features = torch.cat((features,ff), 0)
-    return features
+        if opt.mixed:
+            """
+            model.parts_ver=0
+            model.avgpool=nn.AdaptiveAvgPool2d((1, opt.parts))
+            features_hor = get_features(model, img, label)
+            features = torch.add(features, features_hor)
+            """
+            model.checkerboard=True
+            model.avgpool=nn.AdaptiveAvgPool2d((int(opt.parts / 2), 2))
+            features_cb = get_features(model, img, label)
+
+            features = torch.add(features, features_cb)
+            features = torch.div(features, 2)
+        features_final = torch.cat((features_final,features), 0)
+
+        print(features_final.shape)
+    return features_final
 
 
 def get_id(img_path):

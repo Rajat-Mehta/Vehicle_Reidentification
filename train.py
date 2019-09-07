@@ -66,10 +66,11 @@ parser.add_argument('--h', default=256, type=int, help='height')
 parser.add_argument('--w', default=128, type=int, help='width')
 parser.add_argument('--pool', default='avg', type=str, help='pool avg')
 parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
-parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
+parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps vertically or horizontally (1 or 0)')
 parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning in PCB')
 parser.add_argument('--no_induction', action='store_true', help='dont use induced training in PCB')
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory')
+parser.add_argument('--mixed_part', action='store_true', help='use mixed partitioning training: first vertical, then horizontal and then checkerboard')
 
 opt = parser.parse_args()
 
@@ -88,7 +89,7 @@ elif opt.use_siamese:
 elif opt.use_NAS:
     name = "ft_net_NAS"
 elif opt.PCB:
-    name = "ft_ResNet_PCB/CB_8_horizontal"
+    name = "ft_ResNet_PCB"
 elif opt.use_ftnet:
     name = "ft_ResNet"
 
@@ -730,14 +731,41 @@ if opt.PCB or opt.RPP:
     if not opt.no_induction:
         print("STARTING STEP 1 OF PCB:")
         stage = 'pcb'
-        model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
-                    checkerboard=opt.CB)
-        # model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
-        if opt.cluster:
-            model = model.convert_to_rpp_cluster()
-        model = model.cuda()
-        print(model)
-        model = pcb_train(model, criterion, stage, opt.epochs)
+
+        if opt.mixed_part:
+            print("Started Training PCB with checkerboard partitioning")
+            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=1, checkerboard=True)
+            model = model.cuda()
+            print(model)
+            model = pcb_train(model, criterion, stage, 40)
+            print("Checkerboard partition training finished")
+
+            print("Started Training PCB with vertical partitioning")
+            model.checkerboard=False
+            model.avgpool=nn.AdaptiveAvgPool2d((opt.parts, 1))
+            print(model)
+            start_epoch=40
+            model = pcb_train(model, criterion, stage, 100)
+            print("Vertical partition training finished")
+            
+            """
+            print("Started Training PCB with horizontal partitioning")
+            model.parts_ver=0
+            model.avgpool=nn.AdaptiveAvgPool2d((1, opt.parts))
+            print(model)
+            start_epoch=35
+            model = pcb_train(model, criterion, stage, 60)
+            print("Horizontal partition training finished")
+            """
+        else:
+            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB)
+            # model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
+            if opt.cluster:
+                model = model.convert_to_rpp_cluster()
+            model = model.cuda()
+            print(model)
+            model = pcb_train(model, criterion, stage, opt.epochs)
 
     # step2&3: RPP training #
     if opt.RPP:
