@@ -367,13 +367,25 @@ class ft_net_middle(nn.Module):
 
 # Part Model proposed in Yifan Sun etal. (2018)
 class PCB(nn.Module):
-    def __init__(self, class_num, return_f=False, num_bottleneck=256, num_parts=6, parts_ver=1, checkerboard=False):
+    def __init__(self, class_num, return_f=False, num_bottleneck=256, num_parts=6, parts_ver=1, checkerboard=False, rpp=False, share_conv=False):
         super(PCB, self).__init__()
-        # self.in_features = 2048
+        self.share_conv=share_conv
+        self.in_features = 2048
+        self.out_features = 2048
         self.return_f = return_f
+        relu_bool = False
+        linear_bool = True
+        dropout_bool = 0.5
+
+        if self.share_conv:
+            relu_bool = True
+            linear_bool = False
+            self.out_features = 256
+
         self.part = num_parts  # We cut the pool5 to 6 parts
         self.parts_ver = parts_ver
         self.checkerboard = checkerboard
+        self.rpp=rpp
 
         if self.parts_ver == 1:
             pool_size = (self.part, 1)
@@ -386,16 +398,19 @@ class PCB(nn.Module):
         model_ft = models.resnet50(pretrained=True)
         self.model = model_ft
         self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
-        # self.conv11 = nn.Conv2d(self.in_features, 1024, kernel_size=(1, 1), stride=(1, 1), bias=False)
-        self.dropout = nn.Dropout(p=0.5)
+
+        if self.share_conv:
+            self.conv11 = nn.Conv2d(self.in_features, self.out_features, kernel_size=(1, 1), stride=(1, 1), bias=False)
+
+        #self.dropout = nn.Dropout(p=0.5)
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
-
+        
         # define classifiers
         for i in range(num_parts):
             name = 'classifier' + str(i)
-            setattr(self, name, ClassBlock(2048, class_num, droprate=0.5, relu=False, bnorm=True,
+            setattr(self, name, ClassBlock(self.out_features, class_num, droprate=0.5, relu=relu_bool, bnorm=True, linear=linear_bool,
                                            num_bottleneck=num_bottleneck, return_f=return_f))
 
     def forward(self, x):
@@ -408,12 +423,13 @@ class PCB(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
         x = self.avgpool(x)
-        # x = self.conv11(x)
-        x = self.dropout(x)
+        if self.share_conv:
+            x = self.conv11(x)
+        
         part = {}
         predict = {}
 
-        if self.checkerboard:
+        if self.checkerboard and not self.rpp:
             # get checkerboard feature maps
             k = 0
             for i in range(int(self.part / 2)):
@@ -532,13 +548,13 @@ class Cluster(nn.Module):
 
 
 class PCB_test(nn.Module):
-    def __init__(self, model, num_parts, parts_ver=1, checkerboard=False):
+    def __init__(self, model, num_parts, parts_ver=1, checkerboard=False, rpp=False):
         super(PCB_test, self).__init__()
         self.part = num_parts
         self.model = model.model
         self.parts_ver = parts_ver
         self.checkerboard = checkerboard
-
+        self.rpp = rpp
         if self.parts_ver == 1:
             pool_size = (self.part, 1)
         elif self.parts_ver == 0:
@@ -547,7 +563,7 @@ class PCB_test(nn.Module):
         if self.checkerboard:
             pool_size = (int(num_parts / 2), 2)
 
-        self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
+        self.avgpool = model.avgpool
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
