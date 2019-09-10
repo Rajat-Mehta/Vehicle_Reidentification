@@ -41,7 +41,7 @@ except ImportError: # will be 3.x series
 # Options
 # --------
 parser = argparse.ArgumentParser(description='Training')
-parser.add_argument('--gpu_ids', default='1', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--name', default='fusion', type=str, help='output model name')
 parser.add_argument('--data_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='training dir path')
 parser.add_argument('--train_all', action='store_true', help='use all training data')
@@ -67,6 +67,10 @@ parser.add_argument('--w', default=128, type=int, help='width')
 parser.add_argument('--resume', action='store_true', help='resume training')
 parser.add_argument('--finetune_PT', action='store_true', help='use pretrained model trained on VeRi classification')
 parser.add_argument('--nclasses', default=575, type=int, help='width')
+parser.add_argument('--PCB_H', action='store_true', help='Use PCB_Horizontal model in fusion')
+parser.add_argument('--PCB_V', action='store_true', help='Use PCB_Vertical model in fusion')
+parser.add_argument('--PCB_CB', action='store_true', help='Use PCB_CheckerBoard model in fusion')
+parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
 
 opt = parser.parse_args()
 
@@ -93,7 +97,7 @@ transform_train_list = []
 transform_train_list = transform_train_list + [transforms.Resize((384, 192), interpolation=3)]
 
 if opt.flip:
-    transform_train_list = transform_train_list + [transforms.RandomHorizontalFlip(p=opt.flip)]
+    transform_train_list = transform_train_list + [transforms.RandomHorizontalFlip()]
 
 if opt.aug_comb:
     transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate, tl=opt.translate, scale=opt.scale,
@@ -301,7 +305,7 @@ def fliplr(img):
     return img_flip
 
 
-def train_model(model, criterion, optimizer, scheduler, model_PCB, num_epochs=25 ):
+def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=25 ):
     since = time.time()
 
     best_model_wts = model.state_dict()
@@ -362,20 +366,22 @@ def train_model(model, criterion, optimizer, scheduler, model_PCB, num_epochs=25
                     f_ftnet = torch.FloatTensor(now_batch_size,2048,6).zero_() # we have six parts
                     pf_ftnet = torch.FloatTensor(4*now_batch_size,2048,6).zero_() # we have six parts
 
-                    for i in range(2):
-                        if(i==1):
-                            inputs_cpu = fliplr(inputs_cpu)
-                            pos_cpu = fliplr(pos_cpu)
+                    for model_pcb in model_list:
+                        for i in range(2):
+                            if(i==1):
+                                inputs_cpu = fliplr(inputs_cpu)
+                                pos_cpu = fliplr(pos_cpu)
 
-                        input_img = Variable(inputs_cpu.cuda())
-                        pos_img = Variable(pos_cpu.cuda())
-                        f1 = model_PCB(input_img)
-                        f2 = model_PCB(pos_img)
-                        f1 = f1.data.cpu()
-                        f2 = f2.data.cpu()
-                        f_ftnet = f_ftnet+f1
-                        pf_ftnet = pf_ftnet+f2
-
+                            input_img = Variable(inputs_cpu.cuda())
+                            pos_img = Variable(pos_cpu.cuda())
+                            f1 = model_pcb(input_img)
+                            f2 = model_pcb(pos_img)
+                            f1 = f1.data.cpu()
+                            f2 = f2.data.cpu()
+                            f_ftnet = f_ftnet+f1
+                            pf_ftnet = pf_ftnet+f2
+                    f_ftnet = f_ftnet/len(model_list)
+                    pf_ftnet = pf_ftnet/len(model_list)
                     # feature size (n,2048,6)
                     # 1. To treat every part equally, I calculate the norm for every 2048-dim part feature.
                     # 2. To keep the cosine score==1, sqrt(6) is added to norm the whole feature (2048*6).
@@ -560,8 +566,14 @@ def save_network(network, epoch_label):
     if torch.cuda.is_available:
         network.cuda(gpu_ids[0])
 
-def load_network_PCB(network):
-    save_path = os.path.join('./model', 'ft_ResNet_PCB', 'net_%03d.pth'%59)
+def load_network_PCB(network, name):
+    if name == "PCB_V":
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'vertical/part6_vertical', 'net_%03d.pth'%59)
+    elif name == "PCB_H":
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'horizontal/part6_horizontal', 'net_%03d.pth'%49)
+    elif name == "PCB_CB":
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'checkerboard/part6_CB/with_erasing', 'net_%03d.pth'%59)
+
     print('PCB_ResNet: Loading pretrainded model from: ', save_path)
     network.load_state_dict(torch.load(save_path))
     return network
@@ -575,18 +587,46 @@ def load_network_PCB(network):
 if not opt.resume:
     model = ft_net(len(class_names), return_f=True, num_bottleneck=2048)
 
-model_structure_PCB = PCB(len(class_names), return_f=True)
+print("Siamese model")
 print(model)
-print(model_structure_PCB)
-print("Training a fusion of Siamese and PCB_ResNet model.")
-print("Siamese: This model will be trained with triplet loss.")
-model_PCB = load_network_PCB(model_structure_PCB)
-model_PCB = PCB_test(model_PCB)
-model_PCB = model_PCB.eval()
+
+model_list = []
+
+if opt.PCB_H:
+    model_structure_PCB = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=0)
+    model_PCB_H = load_network_PCB(model_structure_PCB,'PCB_H')
+    model_PCB_H = PCB_test(model_PCB_H, num_parts=opt.parts)
+    model_PCB_H = model_PCB_H.eval()
+    if use_gpu:
+        model_PCB_H = model_PCB_H.cuda()
+    print("PCB_Horizontal model", model_PCB_H)
+    model_list.append(model_PCB_H)
+
+if opt.PCB_V:
+    model_structure_PCB = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=1)
+    model_PCB_V = load_network_PCB(model_structure_PCB,'PCB_V')
+    model_PCB_V = PCB_test(model_PCB_V, num_parts=opt.parts)
+    model_PCB_V = model_PCB_V.eval()
+    if use_gpu:
+        model_PCB_V = model_PCB_V.cuda()
+    print("PCB_Vertical model", model_PCB_V)
+    model_list.append(model_PCB_V)
+if opt.PCB_CB:
+    model_structure_PCB = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=1, checkerboard=True)
+    model_PCB_CB = load_network_PCB(model_structure_PCB,'PCB_CB')
+    model_PCB_CB = PCB_test(model_PCB_CB, num_parts=opt.parts)
+    model_PCB_CB = model_PCB_CB.eval()
+    if use_gpu:
+        model_PCB_CB = model_PCB_CB.cuda()
+    print("PCB_Checkerboard model", model_PCB_CB)
+    model_list.append(model_PCB_CB)
+
+print("Training a fusion of Siamese and PCB_ResNet models.")
+print("Siamese model will be trained with triplet loss.")
+
 
 if use_gpu:
     model = model.cuda()
-    model_PCB = model_PCB.cuda()
 
 criterion = nn.CrossEntropyLoss()
 
@@ -602,6 +642,7 @@ if not opt.PCB:
              {'params': model.classifier.parameters(), 'lr': opt.lr}
          ], weight_decay=5e-4, momentum=0.9, nesterov=True)
 else:
+    """ optimizer for PCB model is defined only for 6 parts as of now, it can be changed if you want to train part 4 or part 8 model"""
     ignored_params = list(map(id, model.model.fc.parameters() ))
     ignored_params += (list(map(id, model.classifier0.parameters() )) 
                      +list(map(id, model.classifier1.parameters() ))
@@ -649,6 +690,6 @@ if fp16:
     # model = network_to_half(model)
     # optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
     model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level="O1")
-model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler, model_PCB,
+model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler, model_list,
                     num_epochs=150)
 
