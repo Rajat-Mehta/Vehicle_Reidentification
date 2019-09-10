@@ -125,7 +125,7 @@ class ClassBlock(nn.Module):
             f = x
             f_norm = f.norm(p=2, dim=1, keepdim=True) + 1e-8
             f = f.div(f_norm)
-            x = self.classifier(f)
+            # x = self.classifier(f)
             # return x, f
             return f
         else:
