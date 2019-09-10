@@ -3,6 +3,7 @@ veri/
 vision/
 tutorial/
 .idea/
+.vscode/
 __pycache__/
 ignore/
 saved_features/backup_features

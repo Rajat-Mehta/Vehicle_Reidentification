@@ -71,6 +71,7 @@ parser.add_argument('--CB', action='store_true', help='use checkerboard partitio
 parser.add_argument('--no_induction', action='store_true', help='dont use induced training in PCB')
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory')
 parser.add_argument('--mixed_part', action='store_true', help='use mixed partitioning training: first vertical, then horizontal and then checkerboard')
+parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
 
 opt = parser.parse_args()
 
@@ -418,7 +419,7 @@ def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=2
         time_elapsed // 60, time_elapsed % 60))
     # print('Best val Acc: {:4f}'.format(best_acc))
     model.load_state_dict(last_model_wts)
-    save_network(model, 'last')
+    save_network(model, 'last', stage)
 
     return model
 
@@ -508,36 +509,36 @@ def pcb_train(model, criterion, stage, num_epoch):
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
     if opt.parts == 6:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.01},
-            {'params': model.model.fc.parameters(), 'lr': 0.1},
-            {'params': model.classifier0.parameters(), 'lr': 0.1},
-            {'params': model.classifier1.parameters(), 'lr': 0.1},
-            {'params': model.classifier2.parameters(), 'lr': 0.1},
-            {'params': model.classifier3.parameters(), 'lr': 0.1},
-            {'params': model.classifier4.parameters(), 'lr': 0.1},
-            {'params': model.classifier5.parameters(), 'lr': 0.1}
+            {'params': base_params, 'lr': 0.1*opt.lr},
+            {'params': model.model.fc.parameters(), 'lr': opt.lr},
+            {'params': model.classifier0.parameters(), 'lr': opt.lr},
+            {'params': model.classifier1.parameters(), 'lr': opt.lr},
+            {'params': model.classifier2.parameters(), 'lr': opt.lr},
+            {'params': model.classifier3.parameters(), 'lr': opt.lr},
+            {'params': model.classifier4.parameters(), 'lr': opt.lr},
+            {'params': model.classifier5.parameters(), 'lr': opt.lr}
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     elif opt.parts == 8:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.01},
-            {'params': model.model.fc.parameters(), 'lr': 0.1},
-            {'params': model.classifier0.parameters(), 'lr': 0.1},
-            {'params': model.classifier1.parameters(), 'lr': 0.1},
-            {'params': model.classifier2.parameters(), 'lr': 0.1},
-            {'params': model.classifier3.parameters(), 'lr': 0.1},
-            {'params': model.classifier4.parameters(), 'lr': 0.1},
-            {'params': model.classifier5.parameters(), 'lr': 0.1},
-            {'params': model.classifier6.parameters(), 'lr': 0.1},
-            {'params': model.classifier7.parameters(), 'lr': 0.1}
+            {'params': base_params, 'lr': 0.1*opt.lr},
+            {'params': model.model.fc.parameters(), 'lr': opt.lr},
+            {'params': model.classifier0.parameters(), 'lr': opt.lr},
+            {'params': model.classifier1.parameters(), 'lr': opt.lr},
+            {'params': model.classifier2.parameters(), 'lr': opt.lr},
+            {'params': model.classifier3.parameters(), 'lr': opt.lr},
+            {'params': model.classifier4.parameters(), 'lr': opt.lr},
+            {'params': model.classifier5.parameters(), 'lr': opt.lr},
+            {'params': model.classifier6.parameters(), 'lr': opt.lr},
+            {'params': model.classifier7.parameters(), 'lr': opt.lr}
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     else:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.01},
-            {'params': model.model.fc.parameters(), 'lr': 0.1},
-            {'params': model.classifier0.parameters(), 'lr': 0.1},
-            {'params': model.classifier1.parameters(), 'lr': 0.1},
-            {'params': model.classifier2.parameters(), 'lr': 0.1},
-            {'params': model.classifier3.parameters(), 'lr': 0.1}
+            {'params': base_params, 'lr': 0.1*opt.lr},
+            {'params': model.model.fc.parameters(), 'lr': opt.lr},
+            {'params': model.classifier0.parameters(), 'lr': opt.lr},
+            {'params': model.classifier1.parameters(), 'lr': opt.lr},
+            {'params': model.classifier2.parameters(), 'lr': opt.lr},
+            {'params': model.classifier3.parameters(), 'lr': opt.lr}
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
 
     # Decay LR by a factor of 0.1 every 40 epochs
@@ -556,7 +557,8 @@ def pcb_train(model, criterion, stage, num_epoch):
 def rpp_train(model, criterion, stage, num_epoch):
     if opt.no_induction:
         ignored_params = list(map(id, model.model.fc.parameters()))
-        ignored_params += (list(map(id, model.classifier0.parameters()))
+        ignored_params += (list(map(id, model.avgpool.parameters()))
+                        + list(map(id, model.classifier0.parameters()))
                         + list(map(id, model.classifier1.parameters()))
                         + list(map(id, model.classifier2.parameters()))
                         + list(map(id, model.classifier3.parameters()))
@@ -575,43 +577,46 @@ def rpp_train(model, criterion, stage, num_epoch):
         base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
         if opt.parts == 6:
             optimizer_ft = optim.SGD([
-                {'params': base_params, 'lr': 0.01},
-                {'params': model.model.fc.parameters(), 'lr': 0.1},
-                {'params': model.classifier0.parameters(), 'lr': 0.1},
-                {'params': model.classifier1.parameters(), 'lr': 0.1},
-                {'params': model.classifier2.parameters(), 'lr': 0.1},
-                {'params': model.classifier3.parameters(), 'lr': 0.1},
-                {'params': model.classifier4.parameters(), 'lr': 0.1},
-                {'params': model.classifier5.parameters(), 'lr': 0.1}
+                {'params': base_params, 'lr': 0.1*opt.lr},
+                {'params': model.avgpool.parameters(), 'lr': opt.lr},
+                {'params': model.model.fc.parameters(), 'lr': opt.lr},
+                {'params': model.classifier0.parameters(), 'lr': opt.lr},
+                {'params': model.classifier1.parameters(), 'lr': opt.lr},
+                {'params': model.classifier2.parameters(), 'lr': opt.lr},
+                {'params': model.classifier3.parameters(), 'lr': opt.lr},
+                {'params': model.classifier4.parameters(), 'lr': opt.lr},
+                {'params': model.classifier5.parameters(), 'lr': opt.lr}
             ], weight_decay=5e-4, momentum=0.9, nesterov=True)
         elif opt.parts == 8:
             optimizer_ft = optim.SGD([
-                {'params': base_params, 'lr': 0.01},
-                {'params': model.model.fc.parameters(), 'lr': 0.1},
-                {'params': model.classifier0.parameters(), 'lr': 0.1},
-                {'params': model.classifier1.parameters(), 'lr': 0.1},
-                {'params': model.classifier2.parameters(), 'lr': 0.1},
-                {'params': model.classifier3.parameters(), 'lr': 0.1},
-                {'params': model.classifier4.parameters(), 'lr': 0.1},
-                {'params': model.classifier5.parameters(), 'lr': 0.1},
-                {'params': model.classifier6.parameters(), 'lr': 0.1},
-                {'params': model.classifier7.parameters(), 'lr': 0.1}
+                {'params': base_params, 'lr': 0.1*opt.lr},
+                {'params': model.avgpool.parameters(), 'lr': opt.lr},
+                {'params': model.model.fc.parameters(), 'lr': opt.lr},
+                {'params': model.classifier0.parameters(), 'lr': opt.lr},
+                {'params': model.classifier1.parameters(), 'lr': opt.lr},
+                {'params': model.classifier2.parameters(), 'lr': opt.lr},
+                {'params': model.classifier3.parameters(), 'lr': opt.lr},
+                {'params': model.classifier4.parameters(), 'lr': opt.lr},
+                {'params': model.classifier5.parameters(), 'lr': opt.lr},
+                {'params': model.classifier6.parameters(), 'lr': opt.lr},
+                {'params': model.classifier7.parameters(), 'lr': opt.lr}
             ], weight_decay=5e-4, momentum=0.9, nesterov=True)
         
         else:
             optimizer_ft = optim.SGD([
-                {'params': base_params, 'lr': 0.01},
-                {'params': model.model.fc.parameters(), 'lr': 0.1},
-                {'params': model.classifier0.parameters(), 'lr': 0.1},
-                {'params': model.classifier1.parameters(), 'lr': 0.1},
-                {'params': model.classifier2.parameters(), 'lr': 0.1},
-                {'params': model.classifier3.parameters(), 'lr': 0.1}
+                {'params': base_params, 'lr': 0.1*opt.lr},
+                {'params': model.avgpool.parameters(), 'lr': opt.lr},
+                {'params': model.model.fc.parameters(), 'lr': opt.lr},
+                {'params': model.classifier0.parameters(), 'lr': opt.lr},
+                {'params': model.classifier1.parameters(), 'lr': opt.lr},
+                {'params': model.classifier2.parameters(), 'lr': opt.lr},
+                {'params': model.classifier3.parameters(), 'lr': opt.lr}
             ], weight_decay=5e-4, momentum=0.9, nesterov=True)
         # Decay LR by a factor of 0.1 every 100 epochs (never use)
         exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
         
     else:
-        optimizer_ft = optim.SGD(model.avgpool.parameters(), lr=0.01,
+        optimizer_ft = optim.SGD(model.avgpool.parameters(), lr=0.1*opt.lr,
                               weight_decay=5e-4, momentum=0.9, nesterov=True)
 
         # Decay LR by a factor of 0.1 every 100 epochs (never use)
@@ -629,7 +634,8 @@ def rpp_train(model, criterion, stage, num_epoch):
 
 def full_train(model, criterion, stage, num_epoch):
     ignored_params = list(map(id, model.model.fc.parameters()))
-    ignored_params += (list(map(id, model.classifier0.parameters()))
+    ignored_params += (list(map(id, model.avgpool.parameters()))
+                     + list(map(id, model.classifier0.parameters()))
                      + list(map(id, model.classifier1.parameters()))
                      + list(map(id, model.classifier2.parameters()))
                      + list(map(id, model.classifier3.parameters()))
@@ -644,44 +650,44 @@ def full_train(model, criterion, stage, num_epoch):
                             + list(map(id, model.classifier6.parameters()))
                             + list(map(id, model.classifier7.parameters()))
                             )
-    ignored_params += list(map(id, model.avgpool.parameters()))
 
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
     
     if opt.parts == 6:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.001},
-            {'params': model.model.fc.parameters(), 'lr': 0.01},
-            {'params': model.classifier0.parameters(), 'lr': 0.01},
-            {'params': model.classifier1.parameters(), 'lr': 0.01},
-            {'params': model.classifier2.parameters(), 'lr': 0.01},
-            {'params': model.classifier3.parameters(), 'lr': 0.01},
-            {'params': model.classifier4.parameters(), 'lr': 0.01},
-            {'params': model.classifier5.parameters(), 'lr': 0.01},
-            {'params': model.avgpool.parameters(), 'lr': 0.01},
+            {'params': base_params, 'lr': 0.01*opt.lr},
+            {'params': model.avgpool.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.model.fc.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier0.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier1.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier2.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier3.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier4.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier5.parameters(), 'lr': 0.1*opt.lr},
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     elif opt.parts == 8:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.01},
-            {'params': model.model.fc.parameters(), 'lr': 0.1},
-            {'params': model.classifier0.parameters(), 'lr': 0.1},
-            {'params': model.classifier1.parameters(), 'lr': 0.1},
-            {'params': model.classifier2.parameters(), 'lr': 0.1},
-            {'params': model.classifier3.parameters(), 'lr': 0.1},
-            {'params': model.classifier4.parameters(), 'lr': 0.1},
-            {'params': model.classifier5.parameters(), 'lr': 0.1},
-            {'params': model.classifier6.parameters(), 'lr': 0.1},
-            {'params': model.classifier7.parameters(), 'lr': 0.1}
+            {'params': base_params, 'lr': 0.01*opt.lr},
+            {'params': model.avgpool.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.model.fc.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier0.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier1.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier2.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier3.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier4.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier5.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier6.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier7.parameters(), 'lr': 0.1*opt.lr}
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     else:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.001},
-            {'params': model.model.fc.parameters(), 'lr': 0.01},
-            {'params': model.classifier0.parameters(), 'lr': 0.01},
-            {'params': model.classifier1.parameters(), 'lr': 0.01},
-            {'params': model.classifier2.parameters(), 'lr': 0.01},
-            {'params': model.classifier3.parameters(), 'lr': 0.01},
-            {'params': model.avgpool.parameters(), 'lr': 0.01},
+            {'params': base_params, 'lr': 0.01*opt.lr},
+            {'params': model.avgpool.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.model.fc.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier0.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier1.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier2.parameters(), 'lr': 0.1*opt.lr},
+            {'params': model.classifier3.parameters(), 'lr': 0.1*opt.lr},
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     # Decay LR by a factor of 0.1 every 100 epochs (never use)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=100, gamma=0.1)
@@ -734,7 +740,7 @@ if opt.PCB or opt.RPP:
 
         if opt.mixed_part:
             print("Started Training PCB with checkerboard partitioning")
-            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=1, checkerboard=True)
+            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=1, checkerboard=True, share_conv=opt.share_conv)
             model = model.cuda()
             print(model)
             model = pcb_train(model, criterion, stage, 40)
@@ -759,8 +765,8 @@ if opt.PCB or opt.RPP:
             """
         else:
             model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
-                        checkerboard=opt.CB)
-            # model.load_state_dict(torch.load('./model/ft_ResNet_PCB/part6_vertical/net_089.pth'))
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
+            #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/checkerboard/part6_CB/with_erasing/net_059.pth'))
             if opt.cluster:
                 model = model.convert_to_rpp_cluster()
             model = model.cuda()
@@ -771,12 +777,12 @@ if opt.PCB or opt.RPP:
     if opt.RPP:
         print("STARTING STEP 2 AND 3 OF PCB:")
         stage = 'rpp'
-        epochs = 5
+        epochs = 15
         if opt.no_induction:
             model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
-                        checkerboard=opt.CB)
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
             epochs = opt.epochs
-
+        model.rpp = True
         model = model.convert_to_rpp()
 
         model = model.cuda()
@@ -786,7 +792,7 @@ if opt.PCB or opt.RPP:
         # step4: whole net training #
         print("STARTING STEP 4 OF PCB:")
         stage = 'full'
-        full_train(model, criterion, stage, 10)
+        full_train(model, criterion, stage, 30)
 
 
 else:
