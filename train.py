@@ -322,7 +322,7 @@ def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=2
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
             if phase == 'train':
-                scheduler.step()
+                #scheduler.step()
                 model.train(True)  # Set model to training mode
             else:
                 model.train(False)  # Set model to evaluate mode
@@ -393,6 +393,9 @@ def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=2
                 else:  # for the old version like 0.3.0 and 0.3.1
                     running_loss += loss.data[0] * now_batch_size
                 running_corrects += float(torch.sum(preds == labels.data))
+            
+            if phase == 'train':
+                scheduler.step()
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects / dataset_sizes[phase]
@@ -766,7 +769,7 @@ if opt.PCB or opt.RPP:
         else:
             model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
-            #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/checkerboard/part6_CB/with_erasing/net_059.pth'))
+            #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
             if opt.cluster:
                 model = model.convert_to_rpp_cluster()
             model = model.cuda()
@@ -777,7 +780,7 @@ if opt.PCB or opt.RPP:
     if opt.RPP:
         print("STARTING STEP 2 AND 3 OF PCB:")
         stage = 'rpp'
-        epochs = 15
+        epochs = 20
         if opt.no_induction:
             model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
@@ -792,7 +795,7 @@ if opt.PCB or opt.RPP:
         # step4: whole net training #
         print("STARTING STEP 4 OF PCB:")
         stage = 'full'
-        full_train(model, criterion, stage, 30)
+        full_train(model, criterion, stage, 40)
 
 
 else:
