@@ -30,6 +30,10 @@ parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--fusion', action='store_true', help='use fusion')
 parser.add_argument('--multi', action='store_true', help='use multiple query')
 parser.add_argument('--fp16', action='store_true', help='use fp16.')
+parser.add_argument('--PCB_H', action='store_true', help='Use PCB_Horizontal model in fusion')
+parser.add_argument('--PCB_V', action='store_true', help='Use PCB_Vertical model in fusion')
+parser.add_argument('--PCB_CB', action='store_true', help='Use PCB_CheckerBoard model in fusion')
+parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
 
 opt = parser.parse_args()
 
@@ -134,7 +138,7 @@ def fliplr(img):
     return img_flip
 
 
-def extract_feature(model, dataloaders, model_PCB=None):
+def extract_feature(model, dataloaders, model_list=None):
     features = torch.FloatTensor()
     count = 0
     for data in dataloaders:
@@ -155,11 +159,16 @@ def extract_feature(model, dataloaders, model_PCB=None):
             f = model(input_img)
             f = f.data.cpu().float()
             ff = ff+f
-
+            
             if opt.fusion:
-                f_PCB = model_PCB(input_img)
-                f_PCB = f_PCB.data.cpu().float()
-                ff_PCB = ff_PCB+f_PCB
+                temp = torch.FloatTensor(n,2048,6).zero_()
+                for model_pcb in model_list:
+                    f_PCB = model_pcb(input_img)
+                    f_PCB = f_PCB.data.cpu().float()
+                    temp = temp+f_PCB
+                temp = temp/len(model_list)
+                ff_PCB = ff_PCB+temp
+                
         # norm feature
         if opt.PCB:
             # feature size (n,2048,6)
@@ -218,18 +227,59 @@ else:
 if opt.PCB:
     model_structure = PCB(opt.nclasses, return_f=True, num_bottleneck=512)
 
+
+def load_network_PCB(network, name):
+    if name == "PCB_V":
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'vertical/part6_vertical', 'net_%03d.pth'%59)
+    elif name == "PCB_H":
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'horizontal/part6_horizontal', 'net_%03d.pth'%49)
+    elif name == "PCB_CB":
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'checkerboard/part6_CB/with_erasing', 'net_%03d.pth'%59)
+
+    print('PCB_ResNet: Loading pretrainded model from: ', save_path)
+    network.load_state_dict(torch.load(save_path))
+    return network
+
+
+model_list = []
+
+if opt.PCB_H:
+    model_structure_PCB = PCB(575, num_bottleneck=256, num_parts=opt.parts, parts_ver=0)
+    model_PCB_H = load_network_PCB(model_structure_PCB,'PCB_H')
+    model_PCB_H = PCB_test(model_PCB_H, num_parts=opt.parts)
+    model_PCB_H = model_PCB_H.eval()
+    if use_gpu:
+        model_PCB_H = model_PCB_H.cuda()
+    print("PCB_Horizontal model", model_PCB_H)
+    model_list.append(model_PCB_H)
+
+if opt.PCB_V:
+    model_structure_PCB = PCB(575, num_bottleneck=256, num_parts=opt.parts, parts_ver=1)
+    model_PCB_V = load_network_PCB(model_structure_PCB,'PCB_V')
+    model_PCB_V = PCB_test(model_PCB_V, num_parts=opt.parts)
+    model_PCB_V = model_PCB_V.eval()
+    if use_gpu:
+        model_PCB_V = model_PCB_V.cuda()
+    print("PCB_Vertical model", model_PCB_V)
+    model_list.append(model_PCB_V)
+if opt.PCB_CB:
+    model_structure_PCB = PCB(575, num_bottleneck=256, num_parts=opt.parts, parts_ver=1, checkerboard=True)
+    model_PCB_CB = load_network_PCB(model_structure_PCB,'PCB_CB')
+    model_PCB_CB = PCB_test(model_PCB_CB, num_parts=opt.parts)
+    model_PCB_CB = model_PCB_CB.eval()
+    if use_gpu:
+        model_PCB_CB = model_PCB_CB.cuda()
+    print("PCB_Checkerboard model", model_PCB_CB)
+    model_list.append(model_PCB_CB)
+
 if opt.fusion:
     """ load ResNet_PCB model here"""
-    model_structure_PCB = PCB(opt.nclasses, return_f=True, num_bottleneck=256)
-    model, model_PCB = load_network(model_structure, model_structure_PCB, True)
-    model_PCB = PCB_test(model_PCB)
-    model_PCB = model_PCB.eval()
+    model = load_network(model_structure)
     model = model.eval()
 
 else:
     model = load_network(model_structure)
     model = model.eval()
-
 
 if opt.PCB:
     model = PCB_test(model)
@@ -246,11 +296,10 @@ if opt.PCB:
 # Change to test mode
 if use_gpu:
     model = model.cuda()
-    model_PCB = model_PCB.cuda()
 
 # Extract feature
-gallery_feature = extract_feature(model, dataloaders['gallery'], model_PCB)
-query_feature = extract_feature(model, dataloaders['query'], model_PCB)
+gallery_feature = extract_feature(model, dataloaders['gallery'], model_list)
+query_feature = extract_feature(model, dataloaders['query'], model_list)
 if opt.multi:
     mquery_feature = extract_feature(model, dataloaders['multi-query'])
     
