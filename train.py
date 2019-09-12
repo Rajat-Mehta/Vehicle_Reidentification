@@ -25,7 +25,14 @@ import math
 from shutil import copyfile
 from train_and_test_siamese import *
 from utils import update_average, get_model_list, load_network, save_network, make_weights_for_balanced_classes
+import pickle
+from kmeans_pytorch.kmeans import lloyd
+import torch.utils.data as utils
+from pykeops.torch import LazyTensor
 
+use_cuda = torch.cuda.is_available()
+dtype = 'float32' if use_cuda else 'float64'
+torchtype = {'float32': torch.float32, 'float64': torch.float64}
 
 version =  torch.__version__
 #fp16
@@ -72,6 +79,7 @@ parser.add_argument('--no_induction', action='store_true', help='dont use induce
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory')
 parser.add_argument('--mixed_part', action='store_true', help='use mixed partitioning training: first vertical, then horizontal and then checkerboard')
 parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
+parser.add_argument('--re_compute_features', action='store_true', help='re compute train set features for KMeans clustering model or not?')
 
 opt = parser.parse_args()
 
@@ -322,7 +330,7 @@ def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=2
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
             if phase == 'train':
-                scheduler.step()
+                #scheduler.step()
                 model.train(True)  # Set model to training mode
             else:
                 model.train(False)  # Set model to evaluate mode
@@ -393,6 +401,9 @@ def train_model(model, criterion, optimizer, scheduler, stage=None, num_epochs=2
                 else:  # for the old version like 0.3.0 and 0.3.1
                     running_loss += loss.data[0] * now_batch_size
                 running_corrects += float(torch.sum(preds == labels.data))
+            
+            if phase == 'train':
+                scheduler.step()
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects / dataset_sizes[phase]
@@ -695,12 +706,6 @@ def full_train(model, criterion, stage, num_epoch):
                         stage=stage, num_epochs=num_epoch)
     return model
 
-######################################################################
-# Finetuning the convnet
-# ----------------------
-#
-# Load a pretrainied model and reset final fully connected layer.
-#
 
 if not opt.resume:
     if opt.use_dense:
@@ -731,8 +736,58 @@ if not opt.PCB:
     # Decay LR by a factor of 0.1 every 40 epochs
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
 
-if opt.PCB or opt.RPP:
 
+def load_pcb(network):
+    save_path = './model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'
+    network.load_state_dict(torch.load(save_path))
+    network = network.eval().cuda()
+    return network
+
+
+def train_cluster(features, centers_path):
+    print("Training KMeans clustering model for train data: ", features.shape)
+
+    clusters_index, centers = KMeans(features, opt.parts)
+
+    with open(centers_path, "wb") as c:
+        pickle.dump(centers, c)
+    print("Cluster centroids saved in pickle file.")
+
+    return centers_path
+
+
+def KMeans(x, K=10, Niter=10, verbose=True):
+    N, D = x.shape  # Number of samples, dimension of the ambient space
+
+    # K-means loop:
+    # - x  is the point cloud,
+    # - cl is the vector of class labels
+    # - c  is the cloud of cluster centroids
+    start = time.time()
+    c = x[:K, :].clone()  # Simplistic random initialization
+    x_i = LazyTensor(x[:, None, :])  # (Npoints, 1, D)
+
+    for i in range(Niter):
+
+        c_j = LazyTensor(c[None, :, :])  # (1, Nclusters, D)
+        D_ij = ((x_i - c_j) ** 2).sum(-1)  # (Npoints, Nclusters) symbolic matrix of squared distances
+        cl = D_ij.argmin(dim=1).long().view(-1)  # Points -> Nearest cluster
+
+        Ncl = torch.bincount(cl).type(torchtype[dtype])  # Class weights
+        for d in range(D):  # Compute the cluster centroids with torch.bincount:
+            c[:, d] = torch.bincount(cl, weights=x[:, d]) / Ncl
+
+    end = time.time()
+
+    if verbose:
+        print("K-means example with {:,} points in dimension {:,}, K = {:,}:".format(N, D, K))
+        print('Timing for {} iterations: {:.5f}s = {} x {:.5f}s\n'.format(
+                Niter, end - start, Niter, (end-start) / Niter))
+
+    return cl, c
+
+
+if opt.PCB or opt.RPP :
     # step1: PCB training #
     if not opt.no_induction:
         print("STARTING STEP 1 OF PCB:")
@@ -753,31 +808,87 @@ if opt.PCB or opt.RPP:
             start_epoch=40
             model = pcb_train(model, criterion, stage, 100)
             print("Vertical partition training finished")
-            
-            """
-            print("Started Training PCB with horizontal partitioning")
-            model.parts_ver=0
-            model.avgpool=nn.AdaptiveAvgPool2d((1, opt.parts))
-            print(model)
-            start_epoch=35
-            model = pcb_train(model, criterion, stage, 60)
-            print("Horizontal partition training finished")
-            """
+
         else:
-            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
-                        checkerboard=opt.CB, share_conv=opt.share_conv)
-            #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/checkerboard/part6_CB/with_erasing/net_059.pth'))
             if opt.cluster:
+                model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                                    checkerboard=opt.CB, share_conv=opt.share_conv)
+                print(model)
+                model = load_pcb(model)
+                centers_path= os.path.join('./model', name, 'centers.pkl')
+                print("STARTING STEP 2 AND 3 OF PCB using KMeans Clustering:")
+
+                # if opt.re_compute_features is false, make sure that cluster centers are already saved in centers.pkl file in the working directory
+                if opt.re_compute_features:
+                    print("Extracting feature vectors from train dataset, which will be used in KMeans clustering to generate opt.num_parts clusters")
+                    features = torch.FloatTensor()
+                    i=0
+                    segment=0
+                    #extracting feature vectors of random 3000 train images and saving in pickle files
+                    for data in dataloaders['train']:    
+                        if i % 50 == 49:
+                            pickle_path = os.path.join('./model', name, 'train_features'+str(segment)+ '.pkl')
+                            segment+=1
+                            #pickle the list and save so that it can be reused later
+                            with open(pickle_path, "wb") as f:
+                                pickle.dump(features, f, protocol=4)
+                            features = torch.FloatTensor()
+                            break
+
+                        i+=1
+                        inputs, labels = data
+                        inputs = Variable(inputs.cuda().detach())
+                        labels = Variable(labels.cuda().detach())
+
+                        x = model.model.conv1(inputs)
+                        x = model.model.bn1(x)
+                        x = model.model.relu(x)
+                        x = model.model.maxpool(x)
+                        x = model.model.layer1(x)
+                        x = model.model.layer2(x)
+                        x = model.model.layer3(x)
+                        x = model.model.layer4(x)
+                        x = x.view(x.shape[0], x.shape[1], -1)
+                        x = x.permute(0, 2, 1)
+                        x=x.data.cpu().float()
+                        features = torch.cat((features,x),0)
+                    
+                    features = torch.FloatTensor()
+                    
+                    for i in range(segment):
+                        pickle_path = os.path.join('./model', name, 'train_features'+str(i)+ '.pkl')
+                        with open(pickle_path, "rb") as f:
+                            temp = pickle.load(f)
+                            features = torch.cat((features, temp))
+                    features = features.view(-1, features.size(2))
+                    print("Feature extraction finished")
+                    print("Feeding extracted feature vectors to KMeans clustering model to generate clusters")
+                    # start clustering with features vector
+                    centers_path = train_cluster(features, centers_path)
+                    print("Clusters generated")
+
                 model = model.convert_to_rpp_cluster()
-            model = model.cuda()
-            print(model)
-            model = pcb_train(model, criterion, stage, opt.epochs)
+                
+                model.avgpool.centers_path = centers_path
+                model = model.cuda()
+                print(model)
+                # step4: whole net training #
+                print("STARTING STEP 4 OF PCB:")
+                stage = 'full'
+                full_train(model, criterion, stage, 40)
+            else:
+                model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
+                #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
+                model = model.cuda()
+                print(model)
+                model = pcb_train(model, criterion, stage, opt.epochs)
 
     # step2&3: RPP training #
     if opt.RPP:
         print("STARTING STEP 2 AND 3 OF PCB:")
         stage = 'rpp'
-        epochs = 15
+        epochs = 20
         if opt.no_induction:
             model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
@@ -792,7 +903,7 @@ if opt.PCB or opt.RPP:
         # step4: whole net training #
         print("STARTING STEP 4 OF PCB:")
         stage = 'full'
-        full_train(model, criterion, stage, 30)
+        full_train(model, criterion, stage, 40)
 
 
 else:

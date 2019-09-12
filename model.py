@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from sklearn.cluster import KMeans
 from kmeans_pytorch.kmeans import lloyd
 import numpy as np
+import pickle
 
 
 ######################################################################
@@ -93,7 +94,7 @@ class ft_net_siamese(nn.Module):
 # Defines the new fc layer and classification layer
 # |--Linear--|--bn--|--relu--|--Linear--|
 class ClassBlock(nn.Module):
-    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=512, linear=True,
+    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=2048, linear=True,
                  return_f=False):
         super(ClassBlock, self).__init__()
         self.return_f = return_f
@@ -262,7 +263,7 @@ class ft_net(nn.Module):
         elif pool == 'avg':
             model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.model = model_ft
-            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear,
+            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear, relu=True,
                                          return_f=return_f, num_bottleneck=num_bottleneck)
 
         if init_model != None:
@@ -398,6 +399,7 @@ class PCB(nn.Module):
         model_ft = models.resnet50(pretrained=True)
         self.model = model_ft
         self.avgpool = nn.AdaptiveAvgPool2d(pool_size)
+        self.dropout = nn.Dropout(p=0.5)
 
         if self.share_conv:
             self.conv11 = nn.Conv2d(self.in_features, self.out_features, kernel_size=(1, 1), stride=(1, 1), bias=False)
@@ -423,6 +425,7 @@ class PCB(nn.Module):
         x = self.model.layer3(x)
         x = self.model.layer4(x)
         x = self.avgpool(x)
+        x = self.dropout(x)
         if self.share_conv:
             x = self.conv11(x)
         
@@ -458,7 +461,7 @@ class PCB(nn.Module):
 
         if not self.return_f:
             y = []
-            for i in range(0, self.part):
+            for i in range(0, self.part):        
                 y.append(predict[i])
             return y
         else:
@@ -490,8 +493,11 @@ class RPP(nn.Module):
 
         norm_block = []
         norm_block += [nn.BatchNorm2d(2048)]
-        norm_block += [nn.ReLU(inplace=True)]
-        # norm_block += [nn.LeakyReLU(0.1, inplace=True)]
+        #norm_block += [nn.ReLU(inplace=True)]
+        norm_block += [nn.LeakyReLU(0.1, inplace=True)]
+        norm_block += [nn.Dropout(p=0.5)]
+                
+
         norm_block = nn.Sequential(*norm_block)
         norm_block.apply(weights_init_kaiming)
 
@@ -523,28 +529,74 @@ class Cluster(nn.Module):
         super(Cluster, self).__init__()
         self.part = num_parts
         self.kmeans = KMeans(n_clusters=self.part)
+        self.centers_path=None
+        self.clusters=None 
 
+    def pairwise(self, x, y=None):
+        '''
+        Input: x is a Nxd matrix
+            y is an optional Mxd matirx
+        Output: dist is a NxM matrix where dist[i,j] is the square norm between x[i,:] and y[j,:]
+                if y is not given then use 'y=x'.
+        i.e. dist[i,j] = ||x[i,:]-y[j,:]||^2
+        '''
+        x_norm = (x**2).sum(1).view(-1, 1)
+        if y is not None:
+            y_t = torch.transpose(y, 0, 1)
+            y_norm = (y**2).sum(1).view(1, -1)
+        else:
+            y_t = torch.transpose(x, 0, 1)
+            y_norm = x_norm.view(1, -1)
+        
+        dist = x_norm + y_norm - 2.0 * torch.mm(x, y_t)
+        # Ensure diagonal is zero if x=y
+        # if y is None:
+        #     dist = dist - torch.diag(dist.diag)
+        dist[dist != dist] = 0
+        return dist
+        
     def forward(self, x):
-        # print(x.shape)
         x = x.view(x.shape[0], x.shape[1], -1)
-        # print(x.shape)
         x = x.permute(0, 2, 1)
-        # print(x.shape)
-        clus = torch.FloatTensor()
+        
+        with open(self.centers_path, "rb") as c:
+            self.clusters = pickle.load(c).cuda()
 
+        output = torch.FloatTensor().cuda()
         for i in range(x.shape[0]):
+            clus = torch.FloatTensor().cuda()
+            dist = self.pairwise(x[i],self.clusters)
+            choice_cluster = torch.argmin(dist, dim=1)
+            initial_state = []
+            for index in range(self.part):
+                selected = torch.nonzero(choice_cluster==index).squeeze()        
+                selected = torch.index_select(x[i], 0, selected)
+                m = selected.mean(dim=0)
+                m=m.unsqueeze_(0)
+                clus=torch.cat((clus, m), dim=0)
+            clus.unsqueeze_(0)
+            output = torch.cat((output,clus),dim=0)
+        output=output.permute(0,2,1)
+        # print(x.shape)
+        #clusters_index, centers = KMeans(x, self.part)#load precomputed 6 clusters from pickle file
+        #for each of the 288 vectors in each image, find the nearest cluster.
+        #vectors belonging to same clusters will form clusters
+        #take their average, which will result in 32*2048*6
+        #return it
+
+        #for i in range(x.shape[0]):
             # lloyd(X, n_clusters, device=0, tol=1e-4)
-            clusters_index, centers = lloyd(x[i].cpu().detach().numpy(), self.part, device=0, tol=1e-4)
-            cent = centers
+            #clusters_index, centers = lloyd(x[i].cpu().detach().numpy(), self.part, device=0, tol=1e-4)
+            #cent = centers
 
             #self.kmeans.fit(x[i].cpu().detach().numpy())
             #cent = self.kmeans.cluster_centers_
-            cent = torch.from_numpy(cent).float()
-            cent = cent.permute(1, 0)
-            cent.unsqueeze_(0)
-            clus = torch.cat((clus, cent), 0)
-        clus.unsqueeze_(3)
-        return clus.cuda()
+            #cent = torch.from_numpy(cent).float()
+            #cent = cent.permute(1, 0)
+            #cent.unsqueeze_(0)
+            #clus = torch.cat((clus, cent), 0)
+        #clus.unsqueeze_(3)
+        return output
 
 
 class PCB_test(nn.Module):
@@ -563,7 +615,7 @@ class PCB_test(nn.Module):
         if self.checkerboard:
             pool_size = (int(num_parts / 2), 2)
 
-        self.avgpool = model.avgpool
+        self.avgpool = nn.AdaptiveAvgPool2d((self.part, 1))
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)

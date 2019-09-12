@@ -45,6 +45,7 @@ parser.add_argument('--multi', action='store_true', help='use multiple query')
 parser.add_argument('--fp16', action='store_true', help='use fp16.')
 parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning or not.')
 parser.add_argument('--mixed', action='store_true', help='use mixed partitioning or not.')
+parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
 
 opt = parser.parse_args()
 ### load config ###
@@ -289,7 +290,8 @@ elif opt.use_ftnet:
 
 
 if opt.PCB:
-    model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+    model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver, 
+                          checkerboard=opt.CB, share_conv=opt.share_conv)
 if opt.RPP:
     model_structure = model_structure.convert_to_rpp()
     
