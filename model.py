@@ -93,7 +93,7 @@ class ft_net_siamese(nn.Module):
 # Defines the new fc layer and classification layer
 # |--Linear--|--bn--|--relu--|--Linear--|
 class ClassBlock(nn.Module):
-    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=512, linear=True,
+    def __init__(self, input_dim, class_num, droprate, relu=False, bnorm=True, num_bottleneck=2048, linear=True,
                  return_f=False):
         super(ClassBlock, self).__init__()
         self.return_f = return_f
@@ -262,7 +262,7 @@ class ft_net(nn.Module):
         elif pool == 'avg':
             model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.model = model_ft
-            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear,
+            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear, relu=True,
                                          return_f=return_f, num_bottleneck=num_bottleneck)
 
         if init_model != None:
@@ -458,7 +458,7 @@ class PCB(nn.Module):
 
         if not self.return_f:
             y = []
-            for i in range(0, self.part):
+            for i in range(0, self.part):        
                 y.append(predict[i])
             return y
         else:
@@ -490,8 +490,11 @@ class RPP(nn.Module):
 
         norm_block = []
         norm_block += [nn.BatchNorm2d(2048)]
-        norm_block += [nn.ReLU(inplace=True)]
-        # norm_block += [nn.LeakyReLU(0.1, inplace=True)]
+        #norm_block += [nn.ReLU(inplace=True)]
+        norm_block += [nn.LeakyReLU(0.1, inplace=True)]
+        norm_block += [nn.Dropout(p=0.5)]
+                
+
         norm_block = nn.Sequential(*norm_block)
         norm_block.apply(weights_init_kaiming)
 
