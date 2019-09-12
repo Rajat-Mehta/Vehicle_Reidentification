@@ -79,6 +79,7 @@ parser.add_argument('--no_induction', action='store_true', help='dont use induce
 parser.add_argument('--fp16', action='store_true', help='use float16 instead of float32, which will save about 50% memory')
 parser.add_argument('--mixed_part', action='store_true', help='use mixed partitioning training: first vertical, then horizontal and then checkerboard')
 parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
+parser.add_argument('--re_compute_features', action='store_true', help='re compute train set features for KMeans clustering model or not?')
 
 opt = parser.parse_args()
 
@@ -807,29 +808,19 @@ if opt.PCB or opt.RPP :
             start_epoch=40
             model = pcb_train(model, criterion, stage, 100)
             print("Vertical partition training finished")
-            
-            """
-            print("Started Training PCB with horizontal partitioning")
-            model.parts_ver=0
-            model.avgpool=nn.AdaptiveAvgPool2d((1, opt.parts))
-            print(model)
-            start_epoch=35
-            model = pcb_train(model, criterion, stage, 60)
-            print("Horizontal partition training finished")
-            """
+
         else:
-            model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
-                        checkerboard=opt.CB, share_conv=opt.share_conv)
-            #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
             if opt.cluster:
-                print("STARTING STEP 2 AND 3 OF PCB using KMeans Clustering:")
                 model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                                     checkerboard=opt.CB, share_conv=opt.share_conv)
+                print(model)
                 model = load_pcb(model)
                 centers_path= os.path.join('./model', name, 'centers.pkl')
+                print("STARTING STEP 2 AND 3 OF PCB using KMeans Clustering:")
 
                 # if opt.re_compute_features is false, make sure that cluster centers are already saved in centers.pkl file in the working directory
                 if opt.re_compute_features:
+                    print("Extracting feature vectors from train dataset, which will be used in KMeans clustering to generate opt.num_parts clusters")
                     features = torch.FloatTensor()
                     i=0
                     segment=0
@@ -861,7 +852,6 @@ if opt.PCB or opt.RPP :
                         x = x.permute(0, 2, 1)
                         x=x.data.cpu().float()
                         features = torch.cat((features,x),0)
-                        print(features.shape)
                     
                     features = torch.FloatTensor()
                     
@@ -871,8 +861,11 @@ if opt.PCB or opt.RPP :
                             temp = pickle.load(f)
                             features = torch.cat((features, temp))
                     features = features.view(-1, features.size(2))
+                    print("Feature extraction finished")
+                    print("Feeding extracted feature vectors to KMeans clustering model to generate clusters")
                     # start clustering with features vector
                     centers_path = train_cluster(features, centers_path)
+                    print("Clusters generated")
 
                 model = model.convert_to_rpp_cluster()
                 
@@ -884,6 +877,9 @@ if opt.PCB or opt.RPP :
                 stage = 'full'
                 full_train(model, criterion, stage, 40)
             else:
+                model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
+                #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
                 model = model.cuda()
                 print(model)
                 model = pcb_train(model, criterion, stage, opt.epochs)
