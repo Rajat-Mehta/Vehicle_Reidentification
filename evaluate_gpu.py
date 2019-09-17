@@ -11,7 +11,9 @@ parser = argparse.ArgumentParser(description='Evaluate')
 parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--use_siamese',  action='store_true', help='evaluate siamese or not')
 parser.add_argument('--keep_num',  default=100, help='how many images to keep from other cameras')
+parser.add_argument('--use_dense',  action='store_true', help='evaluate densenet or not')
 parser.add_argument('--use_single_camera',  action='store_true', help='use single camera gallery images')
+parser.add_argument('--use_NAS',  action='store_true', help='evaluate nasnet or not')
 parser.add_argument('--PCB',  action='store_true', help='evaluate PCB or not')
 parser.add_argument('--siamese_PCB',  action='store_true', help='evaluate Siamese with PCB or not')
 parser.add_argument('--fusion',  action='store_true', help='evaluate fusion model or not')
@@ -25,6 +27,10 @@ if opts.use_siamese:
     name = 'siamese'
 elif opts.siamese_PCB:
     name = 'siamese_PCB'
+elif opts.use_dense:
+    name = 'ft_net_dense'
+elif opts.use_NAS:
+    name = 'ft_net_NAS'
 elif opts.PCB:
     name = "ft_ResNet_PCB"
 elif opts.fusion:
