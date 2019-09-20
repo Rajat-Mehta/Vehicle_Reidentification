@@ -38,6 +38,7 @@ parser.add_argument('--parts', default=6, type=int, help='batchsize')
 parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
+parser.add_argument('--use_NAS', action='store_true', help='use nasnet')
 parser.add_argument('--RPP', action='store_true', help='use refined part pooling in PCB or not')
 parser.add_argument('--use_siamese', action='store_true', help='use siamese')
 parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
@@ -51,7 +52,7 @@ opt = parser.parse_args()
 ### load config ###
 # load the training config
 
-if opt.use_ftnet is False and opt.use_siamese is False and opt.PCB is False:
+if opt.use_ftnet is False and opt.use_siamese is False and opt.PCB is False and opt.use_dense is False and opt.use_NAS is False:
     print("No model selected. Please select at least one model: use_ftnet or use_siamese")
     exit()
 
@@ -59,6 +60,10 @@ if opt.use_ftnet:
     name = "ft_ResNet"
 elif opt.use_siamese:
     name = "siamese"
+elif opt.use_dense:
+    name = "ft_net_dense"
+elif opt.use_NAS:
+    name = "ft_net_NAS"
 elif opt.PCB:
     name = "ft_ResNet_PCB"
 
@@ -187,6 +192,8 @@ def fliplr(img):
 def get_features(model, img, label):
     n, c, h, w = img.size()
     ff = torch.FloatTensor(n,512).zero_()
+    if opt.use_dense or opt.use_NAS:
+        ff = torch.FloatTensor(n,2048).zero_()
 
     if opt.PCB:
         ff = torch.FloatTensor(n,2048,opt.parts).zero_() # we have six parts
