@@ -554,7 +554,17 @@ class Cluster(nn.Module):
         #     dist = dist - torch.diag(dist.diag)
         dist[dist != dist] = 0
         return dist
-        
+    
+    def remove_nan(self, x):
+        x[x != x] = 0
+        return x
+
+    def isnan(self, x):
+        x = x != x
+        t = np.unique(x.cpu().float().numpy())
+        #print(t)
+        return 1 in t
+
     def forward(self, x):
         x = x.view(x.shape[0], x.shape[1], -1)
         x = x.permute(0, 2, 1)
@@ -569,9 +579,11 @@ class Cluster(nn.Module):
             choice_cluster = torch.argmin(dist, dim=1)
             initial_state = []
             for index in range(self.part):
-                selected = torch.nonzero(choice_cluster==index).squeeze()        
-                selected = torch.index_select(x[i], 0, selected)
+                selected = torch.nonzero(choice_cluster==index).squeeze()   
+                selected = torch.index_select(x[i], 0, selected)                
                 m = selected.mean(dim=0)
+                if self.isnan(m):
+                    m = self.remove_nan(m)
                 m=m.unsqueeze_(0)
                 clus=torch.cat((clus, m), dim=0)
             clus.unsqueeze_(0)
