@@ -46,6 +46,7 @@ parser.add_argument('--fp16', action='store_true', help='use fp16.')
 parser.add_argument('--CB', action='store_true', help='use checkerboard partitioning or not.')
 parser.add_argument('--mixed', action='store_true', help='use mixed partitioning or not.')
 parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
+parser.add_argument('--cluster', action='store_true', help='use k means clustering to partition feature maps in PCB')
 
 opt = parser.parse_args()
 ### load config ###
@@ -294,7 +295,12 @@ if opt.PCB:
                           checkerboard=opt.CB, share_conv=opt.share_conv)
 if opt.RPP:
     model_structure = model_structure.convert_to_rpp()
-    
+
+if opt.cluster:
+    model_structure = model_structure.convert_to_rpp_cluster()
+    centers_path= os.path.join('./model', name, 'centers.pkl')
+    model_structure.avgpool.centers_path = centers_path
+
 #if opt.fp16:
 #    model_structure = network_to_half(model_structure)
 
