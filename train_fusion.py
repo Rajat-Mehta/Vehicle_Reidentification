@@ -394,12 +394,24 @@ def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=2
                     pf_ftnet = pf_ftnet.view(pf_ftnet.size(0), -1)
                     
                     f_ftnet =Variable(f_ftnet.cuda())
-                    pf_ftnet =Variable(pf_ftnet.cuda())
+                    pf_ftnet =Variable(pf_ftnet.cuda())          
                     f = model(inputs)
                     pf = model(pos)
+                    """
+                    To normalize the feature vectors of siamese networks before concatenation uncomment this portion of code
 
+                    fnorm = torch.norm(f, p=2, dim=1, keepdim=True) 
+                    f = f.div(fnorm.expand_as(f))
+                    f = f.view(f.size(0), -1)
+                    
+                    pfnorm = torch.norm(pf, p=2, dim=1, keepdim=True)  
+                    pf = pf.div(pfnorm.expand_as(pf))
+                    pf = pf.view(pf.size(0), -1)
+                    """
                 f = torch.cat((f,f_ftnet),1)
                 pf = torch.cat((pf,pf_ftnet),1)
+
+                
 
                 # pf = Variable( pf, requires_grad=True)
                 neg_labels = pos_labels
