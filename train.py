@@ -875,7 +875,7 @@ if opt.PCB or opt.RPP :
                 # step4: whole net training #
                 print("STARTING STEP 4 OF PCB:")
                 stage = 'full'
-                full_train(model, criterion, stage, 40)
+                full_train(model, criterion, stage, opt.epochs)
             else:
                 model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
