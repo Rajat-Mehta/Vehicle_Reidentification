@@ -18,6 +18,7 @@ import scipy.io
 import yaml
 from model import ft_net, ft_net_dense, ft_net_NAS, PCB, PCB_test
 from train_and_test_siamese import *
+import matplotlib.pyplot as plt
 
 #fp16
 try:
@@ -35,7 +36,7 @@ parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch',
 parser.add_argument('--name', type=str, help='save model path')
 parser.add_argument('--batchsize', default=256, type=int, help='batchsize')
 parser.add_argument('--parts', default=6, type=int, help='batchsize')
-parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps horizontally or vertically (1 or 0)')
+parser.add_argument('--PCB_Ver', default=1, type=int, help='Divide feature maps vertically or horizontally (1 or 0)')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--use_NAS', action='store_true', help='use nasnet')
@@ -48,6 +49,7 @@ parser.add_argument('--CB', action='store_true', help='use checkerboard partitio
 parser.add_argument('--mixed', action='store_true', help='use mixed partitioning or not.')
 parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
 parser.add_argument('--cluster', action='store_true', help='use k means clustering to partition feature maps in PCB')
+parser.add_argument('--cluster_plots', action='store_true', help='visualize cluster plots')
 
 opt = parser.parse_args()
 ### load config ###
@@ -190,6 +192,19 @@ def fliplr(img):
     return img_flip
 
 
+def plot_image(images, clusters):
+    for i, img in enumerate(images):
+        plt.subplot(2, 1, 1)
+        img = img.permute(1, 2, 0)
+        img = img.data.cpu().numpy()
+        plt.imshow(img)
+
+        plt.subplot(2, 1, 2)
+        plt.imshow(clusters[i], cmap='gist_rainbow', vmin=1, vmax=10)
+
+        plt.savefig('./model/ft_ResNet_PCB/clustering/plots/image_' + str(i)  + '.png')
+
+
 def get_features(model, img, label):
     n, c, h, w = img.size()
     ff = torch.FloatTensor(n,512).zero_()
@@ -206,6 +221,8 @@ def get_features(model, img, label):
         #if opt.fp16:
         #    input_img = input_img.half()
         outputs = model(input_img) 
+        if opt.cluster_plots:
+            plot_image(input_img, clusters)
         f = outputs.data.cpu().float()
         ff = ff+f
     # norm feature
@@ -296,7 +313,7 @@ elif opt.use_NAS:
 elif opt.use_ftnet:
     model_structure = ft_net(opt.nclasses, stride=opt.stride)
 
-
+cluster=False
 if opt.PCB:
     model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver, 
                           checkerboard=opt.CB, share_conv=opt.share_conv)
@@ -305,8 +322,11 @@ if opt.RPP:
 
 if opt.cluster:
     model_structure = model_structure.convert_to_rpp_cluster()
+    print(model_structure)
+    model_structure.avgpool.cluster_plots = opt.cluster_plots
     centers_path= os.path.join('./model', name, 'centers.pkl')
     model_structure.avgpool.centers_path = centers_path
+    cluster=True
 
 #if opt.fp16:
 #    model_structure = network_to_half(model_structure)
@@ -318,7 +338,7 @@ if opt.PCB:
     #if opt.fp16:
     #    model = PCB_test(model[1])
     #else:
-        model = PCB_test(model, num_parts=opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+    model = PCB_test(model, num_parts=opt.parts)
 
 else:
     #if opt.fp16:
