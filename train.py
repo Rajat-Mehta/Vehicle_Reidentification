@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 #from PIL import Image
 import time
 import os
-from model import ft_net, ft_net_dense, ft_net_NAS, PCB
+from model import ft_net, ft_net_dense, ft_net_NAS, PCB, auto_encoder, PCB_test
 from augmentation import RandomErasing
 from augmentation import ImgAugTransform
 
@@ -29,6 +29,7 @@ import pickle
 from kmeans_pytorch.kmeans import lloyd
 import torch.utils.data as utils
 from pykeops.torch import LazyTensor
+from torchvision.utils import save_image
 
 use_cuda = torch.cuda.is_available()
 dtype = 'float32' if use_cuda else 'float64'
@@ -80,6 +81,8 @@ parser.add_argument('--fp16', action='store_true', help='use float16 instead of 
 parser.add_argument('--mixed_part', action='store_true', help='use mixed partitioning training: first vertical, then horizontal and then checkerboard')
 parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
 parser.add_argument('--re_compute_features', action='store_true', help='re compute train set features for KMeans clustering model or not?')
+parser.add_argument('--auto_encode', action='store_true', help='train auto encoder for dimensionality reduction')
+parser.add_argument('--retrain_autoencode', action='store_true', help='retrain auto encoder for dimensionality reduction')
 
 opt = parser.parse_args()
 
@@ -787,6 +790,72 @@ def KMeans(x, K=10, Niter=10, verbose=True):
     return cl, c
 
 
+def train_auto_encoder(auto_encode_model, model_PCB, criterion, optimizer):
+    since = time.time()
+    num_epochs = 60
+    for epoch in range(num_epochs):
+        for data in dataloaders['train']:
+            # get the inputs
+            inputs, labels = data
+            
+            now_batch_size, c, h, w = inputs.shape
+            ff = torch.FloatTensor(now_batch_size,2048,opt.parts).zero_()
+            if now_batch_size < opt.batchsize:  # skip the last batch
+                continue
+            if use_gpu:
+                inputs = Variable(inputs.cuda().detach())
+            else:
+                inputs= Variable(inputs)
+
+            ff = model_PCB(inputs)
+            
+            fnorm = torch.norm(ff, p=2, dim=1, keepdim=True) * np.sqrt(opt.parts) 
+            ff = ff.div(fnorm.expand_as(ff))
+            ff = ff.view(ff.size(0), -1)
+            
+            # ===================forward=====================
+            output = auto_encode_model(ff)
+            loss = criterion(output, ff)
+            # ===================backward====================
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        # ===================log========================
+        time_elapsed = time.time() - since
+        print('Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+        
+        print('epoch [{}/{}], loss:{:.4f}'
+            .format(epoch + 1, num_epochs, loss.item()))
+        
+        if epoch % 10 == 4 or epoch % 10 == 9:
+            torch.save(auto_encode_model.state_dict(), './model/ft_ResNet_PCB/autoencoder/autoencoder_' + str(epoch) + '.pth')
+
+    return auto_encode_model
+
+if opt.auto_encode:
+    model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
+    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
+    model = PCB_test(model, num_parts=opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
+    model = model.cuda()
+
+    if opt.retrain_autoencode:
+        auto_enc_model = auto_encoder()
+        auto_enc_model = auto_enc_model.cuda()
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(auto_enc_model.parameters(), lr=1e-3, weight_decay=1e-5)
+
+        print("Autoencoder model structure: ")
+        print(auto_enc_model)
+
+        auto_enc_model = train_auto_encoder(auto_enc_model, model, criterion, optimizer)
+    else:
+        auto_enc_model = auto_encoder()
+        auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_24.pth'))
+        auto_enc_model = auto_enc_model.cuda()
+
+   
 if opt.PCB or opt.RPP :
     # step1: PCB training #
     if not opt.no_induction:
