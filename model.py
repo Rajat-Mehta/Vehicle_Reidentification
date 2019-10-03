@@ -9,6 +9,7 @@ from sklearn.cluster import KMeans
 from kmeans_pytorch.kmeans import lloyd
 import numpy as np
 import pickle
+import matplotlib.pyplot as plt
 
 
 ######################################################################
@@ -531,7 +532,7 @@ class Cluster(nn.Module):
         self.kmeans = KMeans(n_clusters=self.part)
         self.centers_path=None
         self.clusters=None 
-
+    
     def pairwise(self, x, y=None):
         '''
         Input: x is a Nxd matrix
@@ -571,12 +572,13 @@ class Cluster(nn.Module):
         
         with open(self.centers_path, "rb") as c:
             self.clusters = pickle.load(c).cuda()
-
+        choices=[]
         output = torch.FloatTensor().cuda()
         for i in range(x.shape[0]):
             clus = torch.FloatTensor().cuda()
             dist = self.pairwise(x[i],self.clusters)
             choice_cluster = torch.argmin(dist, dim=1)
+            choices.append(np.reshape(choice_cluster.data.cpu(), (24,12)))
             initial_state = []
             for index in range(self.part):
                 selected = torch.nonzero(choice_cluster==index).squeeze()   
@@ -589,25 +591,7 @@ class Cluster(nn.Module):
             clus.unsqueeze_(0)
             output = torch.cat((output,clus),dim=0)
         output=output.permute(0,2,1)
-        # print(x.shape)
-        #clusters_index, centers = KMeans(x, self.part)#load precomputed 6 clusters from pickle file
-        #for each of the 288 vectors in each image, find the nearest cluster.
-        #vectors belonging to same clusters will form clusters
-        #take their average, which will result in 32*2048*6
-        #return it
-
-        #for i in range(x.shape[0]):
-            # lloyd(X, n_clusters, device=0, tol=1e-4)
-            #clusters_index, centers = lloyd(x[i].cpu().detach().numpy(), self.part, device=0, tol=1e-4)
-            #cent = centers
-
-            #self.kmeans.fit(x[i].cpu().detach().numpy())
-            #cent = self.kmeans.cluster_centers_
-            #cent = torch.from_numpy(cent).float()
-            #cent = cent.permute(1, 0)
-            #cent.unsqueeze_(0)
-            #clus = torch.cat((clus, cent), 0)
-        #clus.unsqueeze_(3)
+        
         return output
 
 
