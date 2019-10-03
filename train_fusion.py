@@ -19,7 +19,7 @@ from PIL import Image
 import time
 import os
 #from reid_sampler import StratifiedSampler
-from model import ft_net_dense, PCB, ft_net_siamese, ft_net, PCB_test
+from model import ft_net_dense, PCB, ft_net_siamese, ft_net, PCB_test, auto_encoder
 from augmentation import RandomErasing
 from augmentation import ImgAugTransform
 from tripletfolder import TripletFolder
@@ -71,6 +71,7 @@ parser.add_argument('--PCB_H', action='store_true', help='Use PCB_Horizontal mod
 parser.add_argument('--PCB_V', action='store_true', help='Use PCB_Vertical model in fusion')
 parser.add_argument('--PCB_CB', action='store_true', help='Use PCB_CheckerBoard model in fusion')
 parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
+parser.add_argument('--auto_encoder', action='store_true', help='use auto encoder for dimensionality reduction')
 
 opt = parser.parse_args()
 
@@ -297,7 +298,7 @@ y_err = {}
 y_err['train'] = []
 y_err['val'] = []
 
-
+    
 def fliplr(img):
     '''flip horizontal'''
     inv_idx = torch.arange(img.size(3)-1,-1,-1).long()  # N x C x H x W
@@ -305,7 +306,7 @@ def fliplr(img):
     return img_flip
 
 
-def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=25 ):
+def train_model(model, criterion, optimizer, scheduler, model_list, auto_enc_model=None, num_epochs=25 ):
     since = time.time()
 
     best_model_wts = model.state_dict()
@@ -320,7 +321,7 @@ def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=2
         # Each epoch has a training and validation phase
         for phase in ['train']:
             if phase == 'train':
-                scheduler.step()
+                #scheduler.step()
                 model.train(True)  # Set model to training mode
             else:
                 model.train(False)  # Set model to evaluate mode
@@ -363,10 +364,13 @@ def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=2
                 else:
                     # model_eval = copy.deepcopy(model)
                     # model_eval = model_eval.eval()
-                    f_ftnet = torch.FloatTensor(now_batch_size,2048,6).zero_() # we have six parts
-                    pf_ftnet = torch.FloatTensor(4*now_batch_size,2048,6).zero_() # we have six parts
-
+                    #f_ftnet = torch.FloatTensor(now_batch_size,2048,6).zero_() # we have six parts
+                    #pf_ftnet = torch.FloatTensor(4*now_batch_size,2048,6).zero_() # we have six parts
+                    f_ftnet=[]
+                    pf_ftnet=[]
                     for model_pcb in model_list:
+                        temp1 = torch.FloatTensor(now_batch_size,2048,6).zero_() # we have six parts
+                        temp2 = torch.FloatTensor(4*now_batch_size,2048,6).zero_() # we have six parts
                         for i in range(2):
                             if(i==1):
                                 inputs_cpu = fliplr(inputs_cpu)
@@ -376,12 +380,24 @@ def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=2
                             pos_img = Variable(pos_cpu.cuda())
                             f1 = model_pcb(input_img)
                             f2 = model_pcb(pos_img)
+
+                            if opt.auto_encoder:
+                                temp1 = torch.FloatTensor(now_batch_size,2048).zero_() # we have six parts
+                                temp2 = torch.FloatTensor(4*now_batch_size,2048).zero_() # we have six parts    
+                                f1 = auto_enc_model.encoder(f1.view(f1.shape[0], -1))
+                                f2 = auto_enc_model.encoder(f2.view(f2.shape[0], -1))
+                            
                             f1 = f1.data.cpu()
                             f2 = f2.data.cpu()
-                            f_ftnet = f_ftnet+f1
-                            pf_ftnet = pf_ftnet+f2
-                    f_ftnet = f_ftnet/len(model_list)
-                    pf_ftnet = pf_ftnet/len(model_list)
+                            temp1 = temp1+f1
+                            temp2 = temp2+f2
+                        f_ftnet.append(temp1)
+                        pf_ftnet.append(temp2)
+                    f_ftnet = torch.max(f_ftnet[0], f_ftnet[1])
+                    pf_ftnet = torch.max(pf_ftnet[0], pf_ftnet[1])
+                    #f_ftnet = f_ftnet/len(model_list)
+                    #pf_ftnet = pf_ftnet/len(model_list)
+
                     # feature size (n,2048,6)
                     # 1. To treat every part equally, I calculate the norm for every 2048-dim part feature.
                     # 2. To keep the cosine score==1, sqrt(6) is added to norm the whole feature (2048*6).
@@ -399,7 +415,7 @@ def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=2
                     pf = model(pos)
                     """
                     To normalize the feature vectors of siamese networks before concatenation uncomment this portion of code
-
+                    
                     fnorm = torch.norm(f, p=2, dim=1, keepdim=True) 
                     f = f.div(fnorm.expand_as(f))
                     f = f.view(f.size(0), -1)
@@ -494,6 +510,9 @@ def train_model(model, criterion, optimizer, scheduler, model_list, num_epochs=2
                 running_corrects += float(torch.sum(pscore>nscore+opt.margin))
                 running_margin +=float(torch.sum(pscore-nscore))
                 running_reg += reg
+            
+            if phase == 'train':
+                scheduler.step()
 
             datasize = dataset_sizes[phase]//opt.batchsize * opt.batchsize
             epoch_loss = running_loss / datasize
@@ -596,6 +615,15 @@ def load_network_PCB(network, name):
 #
 # Load a pretrainied model and reset final fully connected layer.
 #
+
+if opt.auto_encoder:
+    auto_enc_model = auto_encoder()
+    auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_4.pth'))
+    auto_enc_model = auto_enc_model.cuda()
+    print("Auto encoder model structure")
+    print(auto_enc_model)
+
+
 if not opt.resume:
     model = ft_net(len(class_names), return_f=True, num_bottleneck=2048)
 
@@ -702,6 +730,6 @@ if fp16:
     # model = network_to_half(model)
     # optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
     model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level="O1")
-model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler, model_list,
+model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler, model_list, auto_enc_model,
                     num_epochs=150)
 

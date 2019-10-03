@@ -264,7 +264,7 @@ class ft_net(nn.Module):
         elif pool == 'avg':
             model_ft.avgpool = nn.AdaptiveAvgPool2d((1, 1))
             self.model = model_ft
-            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear, relu=True,
+            self.classifier = ClassBlock(2048, class_num, droprate, linear=linear,
                                          return_f=return_f, num_bottleneck=num_bottleneck)
 
         if init_model != None:
@@ -382,7 +382,7 @@ class PCB(nn.Module):
         if self.share_conv:
             relu_bool = True
             linear_bool = False
-            self.out_features = 256
+            self.out_features = 5000
 
         self.part = num_parts  # We cut the pool5 to 6 parts
         self.parts_ver = parts_ver
@@ -596,22 +596,11 @@ class Cluster(nn.Module):
 
 
 class PCB_test(nn.Module):
-    def __init__(self, model, num_parts, parts_ver=1, checkerboard=False, rpp=False):
+    def __init__(self, model, num_parts):
         super(PCB_test, self).__init__()
         self.part = num_parts
         self.model = model.model
-        self.parts_ver = parts_ver
-        self.checkerboard = checkerboard
-        self.rpp = rpp
-        if self.parts_ver == 1:
-            pool_size = (self.part, 1)
-        elif self.parts_ver == 0:
-            pool_size = (1, self.part)
-
-        if self.checkerboard:
-            pool_size = (int(num_parts / 2), 2)
-
-        self.avgpool = nn.AdaptiveAvgPool2d((self.part, 1))
+        self.avgpool = model.avgpool
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
@@ -629,6 +618,35 @@ class PCB_test(nn.Module):
         y = x.view(x.size(0), x.size(1), self.part)
 
         return y
+
+
+class auto_encoder(nn.Module):
+    def __init__(self):
+        super(auto_encoder, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(12288, 6144),
+            nn.ReLU(True), 
+            nn.Linear(6144, 2048), 
+            nn.ReLU(True))
+        self.decoder = nn.Sequential(
+            nn.Linear(2048, 6144),
+            nn.ReLU(True),
+            nn.Linear(6144, 12288),
+            nn.Sigmoid())
+
+    def min_max_normalization(self, tensor, min_value, max_value):
+        min_tensor = tensor.min()
+        tensor = (tensor - min_tensor)
+        max_tensor = tensor.max()
+        tensor = tensor / max_tensor
+        tensor = tensor * (max_value - min_value) + min_value
+        return tensor
+        
+    def forward(self, x):
+        x = self.min_max_normalization(x, 0, 1)
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
 
 
 '''

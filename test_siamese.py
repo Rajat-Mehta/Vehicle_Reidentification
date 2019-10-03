@@ -160,14 +160,19 @@ def extract_feature(model, dataloaders, model_list=None):
             f = f.data.cpu().float()
             ff = ff+f
             
-            if opt.fusion:
-                temp = torch.FloatTensor(n,2048,6).zero_()
-                for model_pcb in model_list:
+        if opt.fusion:           
+            ff_PCB=[]
+            for model_pcb in model_list:
+                f_PCB_f = torch.FloatTensor(n,2048,6).zero_()
+                for i in range(2):
+                    if(i==1):
+                        img = fliplr(img)
+                    input_img = Variable(img.cuda())
                     f_PCB = model_pcb(input_img)
                     f_PCB = f_PCB.data.cpu().float()
-                    temp = temp+f_PCB
-                temp = temp/len(model_list)
-                ff_PCB = ff_PCB+temp
+                    f_PCB_f = f_PCB_f+f_PCB
+                ff_PCB.append(f_PCB_f)
+            ff_PCB = torch.max(ff_PCB[0], ff_PCB[1])
                 
         # norm feature
         if opt.PCB:
