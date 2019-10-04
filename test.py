@@ -220,9 +220,11 @@ def get_features(model, img, label):
         input_img = Variable(img.cuda())
         #if opt.fp16:
         #    input_img = input_img.half()
-        outputs = model(input_img) 
         if opt.cluster_plots:
+            outputs, clusters = model(input_img) 
             plot_image(input_img, clusters)
+        else:
+            outputs = model(input_img) 
         f = outputs.data.cpu().float()
         ff = ff+f
     # norm feature
@@ -313,7 +315,6 @@ elif opt.use_NAS:
 elif opt.use_ftnet:
     model_structure = ft_net(opt.nclasses, stride=opt.stride)
 
-cluster=False
 if opt.PCB:
     model_structure = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver, 
                           checkerboard=opt.CB, share_conv=opt.share_conv)
@@ -326,7 +327,6 @@ if opt.cluster:
     model_structure.avgpool.cluster_plots = opt.cluster_plots
     centers_path= os.path.join('./model', name, 'centers.pkl')
     model_structure.avgpool.centers_path = centers_path
-    cluster=True
 
 #if opt.fp16:
 #    model_structure = network_to_half(model_structure)
@@ -338,7 +338,7 @@ if opt.PCB:
     #if opt.fp16:
     #    model = PCB_test(model[1])
     #else:
-    model = PCB_test(model, num_parts=opt.parts)
+    model = PCB_test(model, num_parts=opt.parts, cluster_plots=opt.cluster_plots)
 
 else:
     #if opt.fp16:

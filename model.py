@@ -532,6 +532,7 @@ class Cluster(nn.Module):
         self.kmeans = KMeans(n_clusters=self.part)
         self.centers_path=None
         self.clusters=None 
+        self.cluster_plots = False
     
     def pairwise(self, x, y=None):
         '''
@@ -591,16 +592,22 @@ class Cluster(nn.Module):
             clus.unsqueeze_(0)
             output = torch.cat((output,clus),dim=0)
         output=output.permute(0,2,1)
-        
-        return output
+        if self.cluster_plots:
+            return output, choices
+        else:
+            return output
 
 
 class PCB_test(nn.Module):
-    def __init__(self, model, num_parts):
+    def __init__(self, model, num_parts, cluster_plots=False):
         super(PCB_test, self).__init__()
         self.part = num_parts
         self.model = model.model
-        self.avgpool = model.avgpool
+        self.cluster_plots = cluster_plots
+        if self.cluster_plots:
+            self.avgpool =  model.avgpool
+        else:
+            self.avgpool =  nn.AdaptiveAvgPool2d((int(num_parts/2), 2))
         # remove the final downsample
         self.model.layer4[0].downsample[0].stride = (1, 1)
         self.model.layer4[0].conv2.stride = (1, 1)
@@ -614,10 +621,16 @@ class PCB_test(nn.Module):
         x = self.model.layer2(x)
         x = self.model.layer3(x)
         x = self.model.layer4(x)
-        x = self.avgpool(x)
-        y = x.view(x.size(0), x.size(1), self.part)
+        if self.cluster_plots:
+            x, clusters = self.avgpool(x)
+            y = x.view(x.size(0), x.size(1), self.part)
+            return y, clusters
+        else:
+            x = self.avgpool(x)
+            y = x.view(x.size(0), x.size(1), self.part)
+            return y
 
-        return y
+
 
 
 class auto_encoder(nn.Module):
