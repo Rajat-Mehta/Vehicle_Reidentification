@@ -174,26 +174,31 @@ transform_val_list = [
 
 if opt.PCB:
     transform_train_list = []
-
     transform_train_list = transform_train_list + [
-        transforms.Resize((opt.h, opt.w), interpolation=3)
-        ] 
-    transform_train_list = transform_train_list + [transforms.RandomHorizontalFlip()]
-    
-    if opt.aug_comb:
-        transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate, tl=opt.translate, scale=opt.scale, aug_comb=opt.aug_comb)]
-    else:
-        if opt.rotate:
-            transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate)]
+            transforms.Resize((opt.h, opt.w), interpolation=3)
+            ] 
 
-        if opt.translate:
-            transform_train_list = transform_train_list + [ImgAugTransform(tl=opt.translate)]
-
-        if opt.scale:
-            transform_train_list = transform_train_list + [ImgAugTransform(scale=opt.scale)]
+    if opt.re_compute_features:
         
-    transform_train_list = transform_train_list + [transforms.ToTensor()]
-    transform_train_list = transform_train_list + [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+        transform_train_list = transform_train_list + [transforms.ToTensor()]
+        transform_train_list = transform_train_list + [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+    else:
+        transform_train_list = transform_train_list + [transforms.RandomHorizontalFlip()]
+        
+        if opt.aug_comb:
+            transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate, tl=opt.translate, scale=opt.scale, aug_comb=opt.aug_comb)]
+        else:
+            if opt.rotate:
+                transform_train_list = transform_train_list + [ImgAugTransform(rt=opt.rotate)]
+
+            if opt.translate:
+                transform_train_list = transform_train_list + [ImgAugTransform(tl=opt.translate)]
+
+            if opt.scale:
+                transform_train_list = transform_train_list + [ImgAugTransform(scale=opt.scale)]
+            
+        transform_train_list = transform_train_list + [transforms.ToTensor()]
+        transform_train_list = transform_train_list + [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
 
     transform_val_list = [
         transforms.Resize(size=(opt.h, opt.w), interpolation=3),  # Image.BICUBIC
@@ -201,10 +206,10 @@ if opt.PCB:
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]
 
-if opt.erasing_p > 0:
+if not opt.re_compute_features and opt.erasing_p > 0:
     transform_train_list = transform_train_list + [RandomErasing(probability = opt.erasing_p, mean=[0.0, 0.0, 0.0])]
 
-if opt.color_jitter:
+if not opt.re_compute_features and opt.color_jitter:
     transform_train_list = [transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0)] + \
                            transform_train_list
 
