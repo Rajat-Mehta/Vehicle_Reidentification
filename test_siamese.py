@@ -14,7 +14,7 @@ from torchvision import datasets, models, transforms
 import time
 import os
 import scipy.io
-from model import ft_net, ft_net_dense, PCB, PCB_test
+from model import ft_net, ft_net_dense, PCB, PCB_test, auto_encoder
 import yaml
 
 ######################################################################
@@ -34,6 +34,7 @@ parser.add_argument('--PCB_H', action='store_true', help='Use PCB_Horizontal mod
 parser.add_argument('--PCB_V', action='store_true', help='Use PCB_Vertical model in fusion')
 parser.add_argument('--PCB_CB', action='store_true', help='Use PCB_CheckerBoard model in fusion')
 parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
+parser.add_argument('--auto_encoder', action='store_true', help='use auto encoder for dimensionality reduction')
 
 opt = parser.parse_args()
 
@@ -164,15 +165,19 @@ def extract_feature(model, dataloaders, model_list=None):
             ff_PCB=[]
             for model_pcb in model_list:
                 f_PCB_f = torch.FloatTensor(n,2048,6).zero_()
+                if opt.auto_encoder:
+                    f_PCB_f = torch.FloatTensor(n,2048).zero_()
                 for i in range(2):
                     if(i==1):
                         img = fliplr(img)
                     input_img = Variable(img.cuda())
                     f_PCB = model_pcb(input_img)
+                    if opt.auto_encoder:
+                        f_PCB = auto_enc_model.encoder(f_PCB.view(f_PCB.shape[0], -1))
                     f_PCB = f_PCB.data.cpu().float()
                     f_PCB_f = f_PCB_f+f_PCB
                 ff_PCB.append(f_PCB_f)
-            ff_PCB = torch.max(ff_PCB[0], ff_PCB[1])
+            ff_PCB = (ff_PCB[0] + ff_PCB[1])/ len(model_list)
                 
         # norm feature
         if opt.PCB:
@@ -231,6 +236,13 @@ else:
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses, return_f=True, num_bottleneck=512)
+
+if opt.auto_encoder:
+    auto_enc_model = auto_encoder()
+    auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_4.pth'))
+    auto_enc_model = auto_enc_model.cuda()
+    print("Auto encoder model structure")
+    print(auto_enc_model)
 
 
 def load_network_PCB(network, name):
