@@ -83,12 +83,15 @@ parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in P
 parser.add_argument('--re_compute_features', action='store_true', help='re compute train set features for KMeans clustering model or not?')
 parser.add_argument('--auto_encode', action='store_true', help='train auto encoder for dimensionality reduction')
 parser.add_argument('--retrain_autoencode', action='store_true', help='retrain auto encoder for dimensionality reduction')
+parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
 
 opt = parser.parse_args()
 
 fp16 = opt.fp16
 data_dir = opt.data_dir
-
+if opt.veri_wild:
+    data_dir = '../Datasets/VeRI-Wild/pytorch'
+    opt.data_dir = '../Datasets/VeRI-Wild/pytorch'
 if opt.use_dense is False and opt.use_siamese is False and opt.use_NAS is False and opt.use_ftnet is False and opt.PCB is False:
     print("No model selected. Please select at least one model to train like: use_ftnet or use_siamese")
     exit()
@@ -562,6 +565,11 @@ def pcb_train(model, criterion, stage, num_epoch):
 
     # Decay LR by a factor of 0.1 every 40 epochs
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=40, gamma=0.1)
+    if fp16:
+        # model = network_to_half(model)
+        # optimizer_ft = FP16_Optimizer(optimizer_ft, static_loss_scale = 128.0)
+        model, optimizer_ft = amp.initialize(model, optimizer_ft, opt_level="O1")
+    
     model = train_model(model, criterion, optimizer_ft, exp_lr_scheduler,
                         stage=stage, num_epochs=num_epoch)
     return model
