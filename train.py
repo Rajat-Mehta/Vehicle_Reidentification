@@ -837,8 +837,8 @@ if opt.auto_encode:
     model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
     model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
-    model = PCB_test(model, num_parts=opt.parts, parts_ver=opt.PCB_Ver, checkerboard=opt.CB)
-    model = model.cuda()
+    model = PCB_test(model, num_parts=opt.parts)
+    model = model.eval().cuda()
 
     if opt.retrain_autoencode:
         auto_enc_model = auto_encoder()
@@ -855,7 +855,7 @@ if opt.auto_encode:
         auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_24.pth'))
         auto_enc_model = auto_enc_model.cuda()
 
-   
+
 if opt.PCB or opt.RPP :
     # step1: PCB training #
     if not opt.no_induction:
