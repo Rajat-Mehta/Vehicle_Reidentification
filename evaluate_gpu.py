@@ -6,6 +6,8 @@ import os
 import random
 import argparse
 import torch.nn.functional as F
+from collections import defaultdict
+from itertools import chain
 
 parser = argparse.ArgumentParser(description='Evaluate')
 parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
@@ -17,6 +19,7 @@ parser.add_argument('--use_NAS',  action='store_true', help='evaluate nasnet or 
 parser.add_argument('--PCB',  action='store_true', help='evaluate PCB or not')
 parser.add_argument('--siamese_PCB',  action='store_true', help='evaluate Siamese with PCB or not')
 parser.add_argument('--fusion',  action='store_true', help='evaluate fusion model or not')
+parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
 
 opts = parser.parse_args()
 KEEP_NUM = int(opts.keep_num)
@@ -32,7 +35,7 @@ elif opts.use_dense:
 elif opts.use_NAS:
     name = 'ft_net_NAS'
 elif opts.PCB:
-    name = "ft_ResNet_PCB"
+    name = "ft_ResNet_PCB/finetune_wild/CB"
 elif opts.fusion:
     name = 'fusion'
 else:
@@ -83,7 +86,7 @@ def evaluate(qf,ql,qc,gf,gl,gc):
 
     score = torch.mm(gf,query)
     score = score.squeeze(1).cpu()
-    score = score.numpy()
+    score = score.numpy()    
     # predict index
     index = np.argsort(score)  #from small to large
     index = index[::-1]
@@ -93,16 +96,16 @@ def evaluate(qf,ql,qc,gf,gl,gc):
     camera_index = np.argwhere(gc==qc)
 
     good_index = np.setdiff1d(query_index, camera_index, assume_unique=True)
-
+    
     junk_index1 = np.argwhere(gl==-1)
     junk_index2 = np.intersect1d(query_index, camera_index)
 
     junk_index = np.append(junk_index2, junk_index1) #.flatten())
-
+    
     # limit the number of images per camera/view in gallery set to (max) keep_num
     new_junk = limit_gallery_images(ql, qc,  gl, gc, junk_index, KEEP_NUM)
     junk_index = np.append(junk_index, new_junk)
-
+    
     # remove all images from same camera as query_camera
     junk_index = np.append(junk_index, camera_index)
     good_index = np.setdiff1d(good_index, junk_index, assume_unique=True)
@@ -192,6 +195,7 @@ def limit_gallery_images(ql, qc, gl, gc, junk_index, keep_num):
 
     good_gallery_camera = np.intersect1d(np.argwhere(gl == ql), np.argwhere(gc != qc))
     good_gallery_camera = np.setdiff1d(good_gallery_camera, junk_index)
+    gc=np.asarray(gc)
 
     camera_labels = gc[good_gallery_camera]
 
@@ -244,9 +248,35 @@ def compute_mAP(index, good_index, junk_index):
 
 
 ######################################################################
-feat_path = './model/' + name + '/pytorch_result_VeRi.mat'
-result = scipy.io.loadmat(feat_path)
-print("Loading saved features from:", feat_path)
+if opts.veri_wild:
+    data_parts = ['0-3000', '3001-6000', '6001-10000']
+    result = dict()
+    g_cam, g_lab, g_feat = [], [], []
+    q_cam, q_lab, q_feat = [], [], []
+    for part in data_parts:
+        path = './model/' + name + '/pytorch_result_VeRi_' + part + '.mat'  
+        print("Loading saved features from:", path)      
+        d = scipy.io.loadmat(path)
+        q_cam.extend(d["query_cam"][0])
+        q_lab.extend(d["query_label"][0])
+        q_feat.extend(d["query_f"])
+        g_cam.extend(d["gallery_cam"][0])
+        g_lab.extend(d["gallery_label"][0])
+        g_feat.extend(d["gallery_f"])
+
+    result['query_cam'] = [q_cam]
+    result['query_label'] = [q_lab]
+    result['query_f'] = q_feat
+    result['gallery_cam'] = [g_cam]
+    result['gallery_label'] = [g_lab]
+    result['gallery_f'] = g_feat
+
+else:
+    feat_path = './model/' + name + '/pytorch_result_VeRi.mat'
+    print("Loading saved features from:", feat_path)
+    result = scipy.io.loadmat(feat_path)
+
+
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
 query_label = result['query_label'][0]
