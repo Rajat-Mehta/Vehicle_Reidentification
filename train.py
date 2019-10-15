@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 #from PIL import Image
 import time
 import os
-from model import ft_net, ft_net_dense, ft_net_NAS, PCB, auto_encoder, PCB_test
+from model import ft_net, ft_net_dense, ft_net_NAS, PCB, auto_encoder, PCB_test, ClassBlock
 from augmentation import RandomErasing
 from augmentation import ImgAugTransform
 
@@ -84,6 +84,7 @@ parser.add_argument('--re_compute_features', action='store_true', help='re compu
 parser.add_argument('--auto_encode', action='store_true', help='train auto encoder for dimensionality reduction')
 parser.add_argument('--retrain_autoencode', action='store_true', help='retrain auto encoder for dimensionality reduction')
 parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
+parser.add_argument('--finetune_wild', action='store_true', help='use veri wild dataset')
 
 opt = parser.parse_args()
 
@@ -115,6 +116,7 @@ if opt.PCB and opt.PCB_Ver:
 elif opt.PCB and not opt.PCB_Ver:
     opt.h, opt.w = 192, 384
 
+veri_wild_classes = 30671
 
 if opt.resume:
     print("Resuming training from presaved model. ")
@@ -511,6 +513,10 @@ def save_train_config_files():
 
 
 def pcb_train(model, criterion, stage, num_epoch):
+    base_lr = 0.1*opt.lr
+    if opt.finetune_wild:
+        base_lr = 0.1*0.1*opt.lr
+
     ignored_params = list(map(id, model.model.fc.parameters()))
     ignored_params += (list(map(id, model.classifier0.parameters()))
                      + list(map(id, model.classifier1.parameters()))
@@ -531,7 +537,7 @@ def pcb_train(model, criterion, stage, num_epoch):
     base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
     if opt.parts == 6:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.1*opt.lr},
+            {'params': base_params, 'lr': base_lr},
             {'params': model.model.fc.parameters(), 'lr': opt.lr},
             {'params': model.classifier0.parameters(), 'lr': opt.lr},
             {'params': model.classifier1.parameters(), 'lr': opt.lr},
@@ -542,7 +548,7 @@ def pcb_train(model, criterion, stage, num_epoch):
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     elif opt.parts == 8:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.1*opt.lr},
+            {'params': base_params, 'lr': base_lr},
             {'params': model.model.fc.parameters(), 'lr': opt.lr},
             {'params': model.classifier0.parameters(), 'lr': opt.lr},
             {'params': model.classifier1.parameters(), 'lr': opt.lr},
@@ -555,7 +561,7 @@ def pcb_train(model, criterion, stage, num_epoch):
         ], weight_decay=5e-4, momentum=0.9, nesterov=True)
     else:
         optimizer_ft = optim.SGD([
-            {'params': base_params, 'lr': 0.1*opt.lr},
+            {'params': base_params, 'lr': base_lr},
             {'params': model.model.fc.parameters(), 'lr': opt.lr},
             {'params': model.classifier0.parameters(), 'lr': opt.lr},
             {'params': model.classifier1.parameters(), 'lr': opt.lr},
@@ -961,7 +967,16 @@ if opt.PCB or opt.RPP :
             else:
                 model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
-                #model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
+                if opt.finetune_wild:
+                    model = PCB(veri_wild_classes, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
+                    print("Loading a PCB model pretrained on Veri-Wild dataset.")
+                    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/veri_wild/net_079.pth'))
+                    
+                    for i in range(opt.parts):
+                        clf_name = 'classifier' + str(i)
+                        model.__setattr__(clf_name, ClassBlock(2048, len(class_names), droprate=0.5, relu=opt.share_conv, bnorm=True, linear=not opt.share_conv,
+                                                    num_bottleneck=256, return_f=False))
                 model = model.cuda()
                 print(model)
                 model = pcb_train(model, criterion, stage, opt.epochs)
