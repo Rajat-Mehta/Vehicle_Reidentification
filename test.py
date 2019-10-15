@@ -50,6 +50,7 @@ parser.add_argument('--mixed', action='store_true', help='use mixed partitioning
 parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in PCB or not')
 parser.add_argument('--cluster', action='store_true', help='use k means clustering to partition feature maps in PCB')
 parser.add_argument('--cluster_plots', action='store_true', help='visualize cluster plots')
+parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
 
 opt = parser.parse_args()
 ### load config ###
@@ -71,6 +72,8 @@ elif opt.PCB:
     name = "ft_ResNet_PCB"
 
 opt.nclasses = 575
+if opt.veri_wild:
+    opt.nclasses=30671
 
 h, w = 256, 128
 if opt.PCB and opt.PCB_Ver:
@@ -94,6 +97,8 @@ if os.path.isfile(config_path):
         opt.nclasses = config['nclasses']
     else:
         opt.nclasses = 575
+        if opt.veri_wild:
+            opt.nclasses = 30671 
 
 print("Model name: ", name)
 print("Epoch: ", opt.which_epoch)
@@ -107,6 +112,9 @@ print("Use_PCB: ", opt.PCB)
 str_ids = opt.gpu_ids.split(',')
 # which_epoch = opt.which_epoch
 test_dir = opt.test_dir
+if opt.veri_wild:
+    opt.test_dir = '../Datasets/VeRI-Wild/pytorch'
+    test_dir = opt.test_dir
 
 gpu_ids = []
 for str_id in str_ids:
@@ -136,31 +144,30 @@ else:
         transforms.Resize((h, w), interpolation=3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ############### Ten Crop
-        #transforms.TenCrop(224),
-        #transforms.Lambda(lambda crops: torch.stack(
-         #   [transforms.ToTensor()(crop)
-          #      for crop in crops]
-           # )),
-        #transforms.Lambda(lambda crops: torch.stack(
-         #   [transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(crop)
-          #       for crop in crops]
-          # ))
     ]
 data_transforms = transforms.Compose(trans)
 
 print(data_transforms)
 data_dir = test_dir
 
+part = ''
+
+if opt.veri_wild and part == '':
+    print("Please enter the part number for the gallery set.")
+    exit()
+
+GALLERY = 'gallery' + part
+QUERY = 'query' + part
+
 if opt.multi:
-    image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ,data_transforms) for x in ['gallery','query','multi-query']}
+    image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ,data_transforms) for x in [GALLERY, QUERY, 'multi-query']}
     dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=opt.batchsize,
-                                             shuffle=False, num_workers=16) for x in ['gallery','query','multi-query']}
+                                             shuffle=False, num_workers=16) for x in [GALLERY, QUERY, 'multi-query']}
 else:
-    image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ,data_transforms) for x in ['gallery','query']}
+    image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ,data_transforms) for x in [GALLERY, QUERY]}
     dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=opt.batchsize,
-                                             shuffle=False, num_workers=16) for x in ['gallery','query']}
-class_names = image_datasets['query'].classes
+                                             shuffle=False, num_workers=16) for x in [GALLERY, QUERY]}
+class_names = image_datasets[QUERY].classes
 use_gpu = torch.cuda.is_available()
 
 
@@ -279,7 +286,10 @@ def get_id(img_path):
     for path, v in img_path:
         # filename = path.split('/')[-1]
         filename = os.path.basename(path)
-        label = filename[0:4]
+        if opt.veri_wild:
+            label = filename[0:5]
+        else:
+            label = filename[0:4]
         camera = filename.split('c')[1]
         if label[0:2]=='-1':
             labels.append(-1)
@@ -290,8 +300,8 @@ def get_id(img_path):
     return camera_id, labels
 
 
-gallery_path = image_datasets['gallery'].imgs
-query_path = image_datasets['query'].imgs
+gallery_path = image_datasets[GALLERY].imgs
+query_path = image_datasets[QUERY].imgs
 
 gallery_cam, gallery_label = get_id(gallery_path)
 query_cam, query_label = get_id(query_path)
@@ -354,15 +364,20 @@ if use_gpu:
 
 # Extract feature
 with torch.no_grad():
-    gallery_feature = extract_feature(model, dataloaders['gallery'])
-    query_feature = extract_feature(model, dataloaders['query'])
+    gallery_feature = extract_feature(model, dataloaders[GALLERY])
+    query_feature = extract_feature(model, dataloaders[QUERY])
     if opt.multi:
         mquery_feature = extract_feature(model, dataloaders['multi-query'])
     
 # Save to Matlab for check
 result = {'gallery_f': gallery_feature.numpy(), 'gallery_label': gallery_label, 'gallery_cam': gallery_cam,
           'query_f': query_feature.numpy(), 'query_label': query_label, 'query_cam': query_cam}
-scipy.io.savemat('./model/' + name + '/pytorch_result_VeRi.mat', result)
+if opt.veri_wild:
+    path = './model/' + name + '/pytorch_result_VeRi' + part + '.mat'
+else:
+    path = './model/' + name + '/pytorch_result_VeRi.mat'
+scipy.io.savemat(path, result)
+
 if opt.multi:
     result = {'mquery_f': mquery_feature.numpy(), 'mquery_label': mquery_label, 'mquery_cam': mquery_cam}
     scipy.io.savemat('./model/' + name + '/multi_query.mat', result)
