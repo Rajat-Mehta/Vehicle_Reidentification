@@ -76,6 +76,61 @@ for img in lines:
     dst_path = os.path.join(gallery_save_path, img_class, file_name)
     copyfile(src_path, dst_path)
 
+# splitting query and gallery set into 3 parts, which makes it easy to the model (because of memory issues)
+data_parts = ['0-3000', '3001-6000', '6001-10000']
+for part in data_parts:
+    print("Splitting query part ", part)
+    #-----------------------------------------
+    #query_3000
+    query_save_path = os.path.join(save_path, 'query_' + part)
+    query_image_list = os.path.join(download_path, 'train_test_split', 'test_query_' + part + '.txt')
+    with open(query_image_list, "r") as q:
+        lines = q.read().split('\n')
+
+    if not os.path.isdir(query_save_path):
+        os.mkdir(query_save_path)
+
+    for img in lines:
+        file_name = ''
+        img_class = img.split('/')[0]
+        img_name = img.split('/')[1]
+
+        if not os.path.isdir(os.path.join(query_save_path, img_class)):
+            os.mkdir(os.path.join(query_save_path, img_class))
+
+        
+        file_name = img_class + '_c' + str("{:03d}".format((vehicle_info['Camera ID'][vehicle_info['image'] == img_name]).iloc[0])) + '_' +img_name +'.jpg'
+        src_path = os.path.join(save_path, 'query', img_class, file_name)
+        dst_path = os.path.join(query_save_path, img_class, file_name)
+        copyfile(src_path, dst_path)
+
+    print("Splitting gallery part ", part)
+    #-----------------------------------------
+    #gallery_3000
+    gallery_save_path = os.path.join(save_path, 'gallery_' + part)
+    gallery_image_list = os.path.join(download_path, 'train_test_split', 'test_' + part + '.txt')
+    with open(gallery_image_list, "r") as q:
+        lines = q.read().split('\n')
+
+    if not os.path.isdir(gallery_save_path):
+        os.mkdir(gallery_save_path)
+    i=0
+    print("Gallery length", len(lines))
+    for img in lines:
+        if i % 1000 ==0:
+            print(i)
+        i+=1
+        file_name = ''
+        img_class = img.split('/')[0]
+        img_name = img.split('/')[1]
+
+        if not os.path.isdir(os.path.join(gallery_save_path, img_class)):
+            os.mkdir(os.path.join(gallery_save_path, img_class))
+
+        file_name = img_class + '_c' + str("{:03d}".format((vehicle_info['Camera ID'][vehicle_info['image'] == img_name]).iloc[0])) + '_' + img_name +'.jpg'
+        src_path = os.path.join(save_path, 'gallery', img_class, file_name)
+        dst_path = os.path.join(gallery_save_path, img_class, file_name)
+        copyfile(src_path, dst_path)
 
 
 #-----------------------------------------
