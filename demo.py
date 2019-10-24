@@ -12,23 +12,40 @@ import torch.nn.functional as F
 #######################################################################
 # Evaluate
 parser = argparse.ArgumentParser(description='Demo')
-parser.add_argument('--query_index', default=777, type=int, help='test_image_index')
+parser.add_argument('--query_index', default=0, type=int, help='test_image_index')
 parser.add_argument('--use_siamese', action='store_true', help='use siamese')
 parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch',type=str, help='./test_data')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
+parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
+parser.add_argument('--testing', action='store_true', help='use testing dataset')
 
 opts = parser.parse_args()
+VERI_WILD = '../Datasets/VeRI-Wild/pytorch'
+VERI = '../Datasets/VeRi_with_plate/pytorch'
+TESTING = '../Datasets/Testing'
 
+part = ''
 if opts.use_ftnet:
     name = "ft_ResNet"
 elif opts.use_siamese:
     name = "siamese"
 elif opts.PCB:
-    name = "ft_ResNet_PCB"
-
+    name = "ft_ResNet_PCB/features_PCB"
+    
 data_dir = opts.test_dir
-image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir, x) ) for x in ['gallery','query']}
+if opts.testing:
+    data_dir = TESTING
+    opts.test_dir = TESTING
+    name = "ft_ResNet_PCB/features_testing"
+
+if opts.veri_wild:
+    data_dir = VERI_WILD
+    opts.test_dir = VERI_WILD
+    part = '_6001-10000'
+    name = "ft_ResNet_PCB/features_veri_wild"
+
+image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir, x) ) for x in ['gallery'+part,'query'+part]}
 
 #####################################################################
 #Show result
@@ -41,7 +58,7 @@ def imshow(path, title=None):
     plt.pause(0.001)  # pause a bit so that plots are updated
 
 ######################################################################
-result = scipy.io.loadmat(os.path.join('./model', name, 'pytorch_result_VeRi.mat'))
+result = scipy.io.loadmat(os.path.join('./model', name, 'pytorch_result_VeRi' + part +'.mat'))
 
 query_feature = torch.FloatTensor(result['query_f'])
 query_cam = result['query_cam'][0]
@@ -106,7 +123,7 @@ index = sort_img(query_feature[i],query_label[i],query_cam[i],gallery_feature,ga
 ########################################################################
 # Visualize the rank result
 
-query_path, _ = image_datasets['query'].imgs[i]
+query_path, _ = image_datasets['query'+ part].imgs[i]
 query_label = query_label[i]
 print("Query label: ", query_label)
 print('Top 10 images are as follow:')
@@ -119,7 +136,7 @@ try:  # Visualize Ranking Result
     for i in range(10):
         ax = plt.subplot(1, 11, i+2)
         ax.axis('off')
-        img_path, _ = image_datasets['gallery'].imgs[index[i]]
+        img_path, _ = image_datasets['gallery'+part].imgs[index[i]]
         label = gallery_label[index[i]]
         imshow(img_path)
         if label == query_label:
