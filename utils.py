@@ -85,13 +85,17 @@ def load_network(name, opt):
     opt.use_dense = config['use_dense']
     opt.PCB = config['PCB']
     opt.fp16 = config['fp16']
-
+    opt.parts = config["parts"]
+    opt.PCB_Ver = config['PCB_Ver']
+    opt.CB = config["CB"]
+    opt.share_conv = config["share_conv"]
     if opt.use_dense:
         model = ft_net_dense(opt.nclasses, opt.droprate, opt.stride, None, opt.pool)
     else:
         model = ft_net(opt.nclasses, opt.droprate, opt.stride, None, opt.pool)
     if opt.PCB:
-        model = PCB(opt.nclasses)
+        model = PCB(opt.nclasses, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
 
     # load model
     if isinstance(epoch, int):
