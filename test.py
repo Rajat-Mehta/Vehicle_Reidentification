@@ -51,6 +51,7 @@ parser.add_argument('--share_conv', action='store_true', help='use 1*1 conv in P
 parser.add_argument('--cluster', action='store_true', help='use k means clustering to partition feature maps in PCB')
 parser.add_argument('--cluster_plots', action='store_true', help='visualize cluster plots')
 parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
+parser.add_argument('--testing', action='store_true', help='use testing dataset')
 
 opt = parser.parse_args()
 ### load config ###
@@ -115,7 +116,9 @@ test_dir = opt.test_dir
 if opt.veri_wild:
     opt.test_dir = '../Datasets/VeRI-Wild/pytorch'
     test_dir = opt.test_dir
-
+if opt.testing:
+    opt.test_dir = '../Datasets/Testing'
+    test_dir = opt.test_dir
 gpu_ids = []
 for str_id in str_ids:
     id = int(str_id)
