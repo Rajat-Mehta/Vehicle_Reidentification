@@ -662,6 +662,47 @@ class auto_encoder(nn.Module):
         return x
 
 
+class Encoder(nn.Module):
+    def __init__(self, input_shape=12288, drop_prob=0):
+        super(Encoder, self).__init__()
+        self.drop_prob = drop_prob
+        
+        self.e1 = nn.Linear(input_shape, 6144)
+        self.bn1 = nn.BatchNorm1d(6144)
+        
+        self.e2 = nn.Linear(6144, 4096)
+        self.bn2 = nn.BatchNorm1d(4096)
+        
+        self.e3 = nn.Linear(4096, 2048)
+        
+    def forward(self, input):
+        
+        block1 = F.dropout(self.bn1(F.elu(self.e1(input))), p=self.drop_prob)
+        block2 = F.dropout(self.bn2(F.elu(self.e2(block1))), p=self.drop_prob)
+        encoded_representation = F.tanh(self.e3(block2))
+        return encoded_representation
+
+
+class Decoder(nn.Module):
+    def __init__(self, output_shape=12288, drop_prob=0):
+        super(Decoder, self).__init__()
+        self.drop_prob = drop_prob
+        
+        self.d = nn.Linear(2048, 4096)
+        self.bn = nn.BatchNorm1d(4096)
+        
+        self.d1 = nn.Linear(4096, 6144)
+        self.bn1 = nn.BatchNorm1d(6144)
+        
+        self.d2 = nn.Linear(6144, output_shape)
+                
+    
+    def forward(self, input):
+        block = F.dropout(self.bn(F.elu(self.d(input))), p=self.drop_prob)
+        block1 = F.dropout(self.bn1(F.elu(self.d1(block))), p=self.drop_prob)
+        reconstruction = self.d2(block1)
+        return reconstruction
+
 '''
 # debug model structure
 # Run this code with:
