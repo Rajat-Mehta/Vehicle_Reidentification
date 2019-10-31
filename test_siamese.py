@@ -14,7 +14,7 @@ from torchvision import datasets, models, transforms
 import time
 import os
 import scipy.io
-from model import ft_net, ft_net_dense, PCB, PCB_test, auto_encoder
+from model import ft_net, ft_net_dense, PCB, PCB_test, auto_encoder, Encoder
 import yaml
 
 ######################################################################
@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser(description='Training')
 parser.add_argument('--gpu_ids', default='0', type=str, help='gpu_ids: e.g. 0  0,1,2  0,2')
 parser.add_argument('--which_epoch', default='69', type=str, help='0,1,2,3...or last')
 parser.add_argument('--test_dir', default='../Datasets/VeRi_with_plate/pytorch', type=str, help='./test_data')
-parser.add_argument('--batchsize', default=16, type=int, help='batchsize')
+parser.add_argument('--batchsize', default=128, type=int, help='batchsize')
 parser.add_argument('--use_dense', action='store_true', help='use densenet121')
 parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--fusion', action='store_true', help='use fusion')
@@ -173,7 +173,7 @@ def extract_feature(model, dataloaders, model_list=None):
                     input_img = Variable(img.cuda())
                     f_PCB = model_pcb(input_img)
                     if opt.auto_encoder:
-                        f_PCB = auto_enc_model.encoder(f_PCB.view(f_PCB.shape[0], -1))
+                        f_PCB = auto_enc_model(f_PCB.view(f_PCB.shape[0], -1))
                     f_PCB = f_PCB.data.cpu().float()
                     f_PCB_f = f_PCB_f+f_PCB
                 ff_PCB.append(f_PCB_f)
@@ -238,8 +238,8 @@ if opt.PCB:
     model_structure = PCB(opt.nclasses, return_f=True, num_bottleneck=512)
 
 if opt.auto_encoder:
-    auto_enc_model = auto_encoder()
-    auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_4.pth'))
+    auto_enc_model = Encoder()
+    auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/encoder_9.pth'))
     auto_enc_model = auto_enc_model.cuda()
     print("Auto encoder model structure")
     print(auto_enc_model)
@@ -247,11 +247,11 @@ if opt.auto_encoder:
 
 def load_network_PCB(network, name):
     if name == "PCB_V":
-        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'vertical/part6_vertical', 'net_%03d.pth'%59)
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'clustering', 'net_%03d.pth'%4)
     elif name == "PCB_H":
         save_path = os.path.join('./model', 'ft_ResNet_PCB', 'horizontal/part6_horizontal', 'net_%03d.pth'%49)
     elif name == "PCB_CB":
-        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'checkerboard/part6_CB/with_erasing', 'net_%03d.pth'%59)
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'finetune_wild/wild_79_CB', 'net_%03d.pth'%99)
 
     print('PCB_ResNet: Loading pretrainded model from: ', save_path)
     network.load_state_dict(torch.load(save_path))
