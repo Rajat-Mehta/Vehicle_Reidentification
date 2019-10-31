@@ -19,7 +19,7 @@ from PIL import Image
 import time
 import os
 #from reid_sampler import StratifiedSampler
-from model import ft_net_dense, PCB, ft_net_siamese, ft_net, PCB_test, auto_encoder
+from model import ft_net_dense, PCB, ft_net_siamese, ft_net, PCB_test, auto_encoder, Encoder
 from augmentation import RandomErasing
 from augmentation import ImgAugTransform
 from tripletfolder import TripletFolder
@@ -384,8 +384,8 @@ def train_model(model, criterion, optimizer, scheduler, model_list, auto_enc_mod
                             if opt.auto_encoder:
                                 temp1 = torch.FloatTensor(now_batch_size,2048).zero_() # we have six parts
                                 temp2 = torch.FloatTensor(4*now_batch_size,2048).zero_() # we have six parts    
-                                f1 = auto_enc_model.encoder(f1.view(f1.shape[0], -1))
-                                f2 = auto_enc_model.encoder(f2.view(f2.shape[0], -1))
+                                f1 = auto_enc_model(f1.view(f1.shape[0], -1))
+                                f2 = auto_enc_model(f2.view(f2.shape[0], -1))
                             
                             f1 = f1.data.cpu()
                             f2 = f2.data.cpu()
@@ -599,11 +599,11 @@ def save_network(network, epoch_label):
 
 def load_network_PCB(network, name):
     if name == "PCB_V":
-        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'vertical/part6_vertical', 'net_%03d.pth'%59)
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'clustering', 'net_%03d.pth'%4)
     elif name == "PCB_H":
         save_path = os.path.join('./model', 'ft_ResNet_PCB', 'horizontal/part6_horizontal', 'net_%03d.pth'%49)
     elif name == "PCB_CB":
-        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'checkerboard/part6_CB/with_erasing', 'net_%03d.pth'%59)
+        save_path = os.path.join('./model', 'ft_ResNet_PCB', 'finetune_wild/wild_79_CB', 'net_%03d.pth'%99)
 
     print('PCB_ResNet: Loading pretrainded model from: ', save_path)
     network.load_state_dict(torch.load(save_path))
@@ -615,10 +615,10 @@ def load_network_PCB(network, name):
 #
 # Load a pretrainied model and reset final fully connected layer.
 #
-
+auto_enc_model=None
 if opt.auto_encoder:
-    auto_enc_model = auto_encoder()
-    auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_4.pth'))
+    auto_enc_model = Encoder()
+    auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/encoder_9.pth'))
     auto_enc_model = auto_enc_model.cuda()
     print("Auto encoder model structure")
     print(auto_enc_model)
