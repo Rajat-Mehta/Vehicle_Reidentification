@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 #from PIL import Image
 import time
 import os
-from model import ft_net, ft_net_dense, ft_net_NAS, PCB, auto_encoder, PCB_test, ClassBlock
+from model import ft_net, ft_net_dense, ft_net_NAS, PCB, auto_encoder, PCB_test, ClassBlock, Encoder, Decoder
 from augmentation import RandomErasing
 from augmentation import ImgAugTransform
 
@@ -760,8 +760,8 @@ if not opt.PCB:
 
 
 def load_pcb(network):
-    save_path = './model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'
-    network.load_state_dict(torch.load(save_path))
+    save_path = './model/ft_ResNet_PCB/finetune_wild/wild_79_vertical/net_099.pth'
+    network.load_state_dict(torch.load(save_path), strict=False)
     network = network.eval().cuda()
     return network
 
@@ -852,23 +852,101 @@ def train_auto_encoder(auto_encode_model, model_PCB, criterion, optimizer):
 
     return auto_encode_model
 
+
+def train_ae(input_tensor, target_tensor, encoder, decoder,
+          encoder_optimizer, decoder_optimizer, criterion):
+    
+    # clear the gradients in the optimizers
+    encoder_optimizer.zero_grad()
+    decoder_optimizer.zero_grad()
+    
+    # Forward pass through 
+    
+    encoded_representation = encoder(input_tensor)
+    reconstruction = decoder(encoded_representation)
+    
+    # Compute the loss
+    loss = criterion(reconstruction, target_tensor)
+
+    # Compute the gradients
+    loss.backward()
+    
+    # Step the optimizers to update the model weights
+    encoder_optimizer.step()
+    decoder_optimizer.step()
+    
+    # Return the loss value to track training progress
+    return loss.item()
+
+
+def trainIters(model_PCB, encoder, decoder, dataloader, epochs, print_every_n_batches=100, learning_rate=0.001):
+    # keep track of losses
+    plot_losses = []
+
+    # Initialize Encoder Optimizer
+    encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate, weight_decay=1e-8)
+    
+    # Initialize Decoder Optimizer
+    decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate, weight_decay=1e-8)
+
+    # Specify loss function
+    criterion = nn.MSELoss(reduce=True)
+    
+    # Cycle through epochs
+    for epoch in range(epochs):
+
+        print(f'Epoch {epoch + 1}/{epochs}')
+        # Cycle through batches
+        for i, batch in enumerate(dataloaders['train']):
+            inputs, label = batch
+            now_batch_size, c, h, w = inputs.shape
+            ff = torch.FloatTensor(now_batch_size,2048,opt.parts).zero_()
+            if now_batch_size < opt.batchsize:  # skip the last batch
+                continue
+            if use_gpu:
+                inputs = Variable(inputs.cuda().detach())
+            else:
+                inputs= Variable(inputs)
+
+            ff = model_PCB(inputs)
+            ff = ff.view(ff.size(0), -1)
+
+            loss = train_ae(ff, ff, encoder, decoder,
+                        encoder_optimizer, decoder_optimizer, criterion)
+            
+
+            """if i % print_every_n_batches == 0 and i != 0:
+                print("Loss: ", loss)
+                plot_losses.append(loss)
+            """
+        if epoch % 10 == 4 or epoch % 10 == 9:
+            torch.save(encoder.state_dict(), './model/ft_ResNet_PCB/autoencoder/encoder_' + str(epoch) + '.pth')
+            torch.save(decoder.state_dict(), './model/ft_ResNet_PCB/autoencoder/decoder_' + str(epoch) + '.pth')
+            
+        print("Loss: ", loss)
+    return plot_losses
+
+
 if opt.auto_encode:
     model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
-    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
+    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/finetune_wild/wild_79_vertical/net_099.pth'))
     model = PCB_test(model, num_parts=opt.parts)
     model = model.eval().cuda()
 
+    encoder = Encoder( drop_prob=0.3).cuda()
+    decoder = Decoder( drop_prob=0.3).cuda()
     if opt.retrain_autoencode:
-        auto_enc_model = auto_encoder()
+        trainIters(model, encoder, decoder, dataloaders, opt.epochs)
+        
+        """auto_enc_model = auto_encoder()
         auto_enc_model = auto_enc_model.cuda()
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(auto_enc_model.parameters(), lr=1e-3, weight_decay=1e-5)
-
         print("Autoencoder model structure: ")
         print(auto_enc_model)
-
         auto_enc_model = train_auto_encoder(auto_enc_model, model, criterion, optimizer)
+        """
     else:
         auto_enc_model = auto_encoder()
         auto_enc_model.load_state_dict(torch.load('./model/ft_ResNet_PCB/autoencoder/autoencoder_24.pth'))
@@ -971,7 +1049,7 @@ if opt.PCB or opt.RPP :
                     model = PCB(veri_wild_classes, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
                     print("Loading a PCB model pretrained on Veri-Wild dataset.")
-                    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/veri_wild/net_079.pth'))
+                    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/veri_wild/79_epochs/net_079.pth'))
                     
                     for i in range(opt.parts):
                         clf_name = 'classifier' + str(i)
