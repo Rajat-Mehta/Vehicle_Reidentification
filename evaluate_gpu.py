@@ -35,7 +35,7 @@ elif opts.use_dense:
 elif opts.use_NAS:
     name = 'ft_net_NAS'
 elif opts.PCB:
-    name = "ft_ResNet_PCB/finetune_wild/CB"
+    name = "ft_ResNet_PCB"
 elif opts.fusion:
     name = 'fusion'
 else:
@@ -108,7 +108,7 @@ def evaluate(qf,ql,qc,gf,gl,gc):
     
     # remove all images from same camera as query_camera
     junk_index = np.append(junk_index, camera_index)
-    good_index = np.setdiff1d(good_index, junk_index, assume_unique=True)
+
     CMC_tmp = compute_mAP(index, good_index, junk_index)
     return CMC_tmp
 
@@ -216,7 +216,7 @@ def limit_gallery_images(ql, qc, gl, gc, junk_index, keep_num):
 
 def compute_mAP(index, good_index, junk_index):
     # good_index can be seen as ground truth images for given query image
-
+    
     ap = 0
     cmc = torch.IntTensor(gallery_size).zero_()
     if good_index.size==0:   # if empty
@@ -254,9 +254,9 @@ if opts.veri_wild:
     g_cam, g_lab, g_feat = [], [], []
     q_cam, q_lab, q_feat = [], [], []
     for part in data_parts:
-        path = './model/' + name + '/pytorch_result_VeRi_' + part + '.mat'  
-        print("Loading saved features from:", path)      
-        d = scipy.io.loadmat(path)
+        feat_path = './model/' + name + '/pytorch_result_VeRi_' + part + '.mat'  
+        print("Loading saved features from:", feat_path)      
+        d = scipy.io.loadmat(feat_path)
         q_cam.extend(d["query_cam"][0])
         q_lab.extend(d["query_label"][0])
         q_feat.extend(d["query_f"])
@@ -331,7 +331,10 @@ CMC = CMC.float()
 CMC = CMC/len(query_label) #average CMC
 print('Rank@1:%f Rank@5:%f Rank@10:%f mAP:%f'%(CMC[0],CMC[4],CMC[9],ap/len(query_label)))
 
-result = open("./results/result_other_cams" + str(KEEP_NUM) + ".txt", "w")
+result = open(os.path.join("model", name , "result.txt"), "w")
+result.write("Loading saved features from: "+ feat_path + "\n")
+result.write(str(query_feature.shape)+ "\n")
+result.write(str(gallery_feature.shape)+ "\n")
 result.write('Rank@1:%f Rank@5:%f Rank@10:%f mAP:%f'%(CMC[0],CMC[4],CMC[9],ap/len(query_label)))
 result.close()
 
