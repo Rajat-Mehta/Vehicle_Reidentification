@@ -8,6 +8,7 @@ import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
 
 #######################################################################
 # Evaluate
@@ -19,12 +20,23 @@ parser.add_argument('--PCB', action='store_true', help='use PCB')
 parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
 parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
 parser.add_argument('--testing', action='store_true', help='use testing dataset')
+parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
 
 opts = parser.parse_args()
 VERI_WILD = '../Datasets/VeRI-Wild/pytorch'
 VERI = '../Datasets/VeRi_with_plate/pytorch'
 TESTING = '../Datasets/Testing'
+str_ids = opts.gpu_ids.split(',')
+gpu_ids = []
+for str_id in str_ids:
+    id = int(str_id)
+    if id >=0:
+        gpu_ids.append(id)
 
+# set gpu ids
+if len(gpu_ids)>0:
+    torch.cuda.set_device(gpu_ids[0])
+    cudnn.benchmark = True
 part = ''
 if opts.use_ftnet:
     name = "ft_ResNet"
@@ -88,9 +100,11 @@ def get_index(gf, query, qf):
         # predict index
         index = np.argsort(distance)  # from small to large
     else:
+        
         score = torch.mm(gf, query)
         score = score.squeeze(1).cpu()
         score = score.numpy()
+        
         # predict index
         index = np.argsort(score)  # from small to large
         index = index[::-1]
