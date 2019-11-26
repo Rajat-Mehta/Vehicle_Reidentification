@@ -21,6 +21,8 @@ parser.add_argument('--use_ftnet', action='store_true', help='use siamese')
 parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
 parser.add_argument('--testing', action='store_true', help='use testing dataset')
 parser.add_argument('--gpu_ids', default='0', type=str,help='gpu_ids: e.g. 0  0,1,2  0,2')
+parser.add_argument('--fusion', action='store_true', help='use fusion')
+parser.add_argument('--model', default='pcb', type=str, help='test_image_index')
 
 opts = parser.parse_args()
 VERI_WILD = '../Datasets/VeRI-Wild/pytorch'
@@ -42,8 +44,19 @@ if opts.use_ftnet:
     name = "ft_ResNet"
 elif opts.use_siamese:
     name = "siamese"
+elif opts.fusion:
+    name = "fusion/finetuned_wild"
 elif opts.PCB:
-    name = "ft_ResNet_PCB/features_PCB"
+    if opts.model == 'ccb':
+        name = "ft_ResNet_PCB/clustering/finetuned_cluster6"
+    elif opts.model =='pcb_cb':
+        name = "ft_ResNet_PCB/finetune_wild/wild_79_CB"
+    elif opts.model =='pcb_finetuned':
+        name = "ft_ResNet_PCB/finetune_wild/wild_79_vertical"
+    else:
+        name = "ft_ResNet_PCB/vertical/part6_vertical"
+
+print("Loading feature vectors from this path: ", name)
     
 data_dir = opts.test_dir
 if opts.testing:
