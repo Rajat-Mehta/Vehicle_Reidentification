@@ -72,6 +72,7 @@ parser.add_argument('--PCB_V', action='store_true', help='Use PCB_Vertical model
 parser.add_argument('--PCB_CB', action='store_true', help='Use PCB_CheckerBoard model in fusion')
 parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
 parser.add_argument('--auto_encoder', action='store_true', help='use auto encoder for dimensionality reduction')
+parser.add_argument('--pcb_backbone', action='store_true', help='sor siamese network use pcb backbone architecture or not')
 
 opt = parser.parse_args()
 
@@ -393,11 +394,14 @@ def train_model(model, criterion, optimizer, scheduler, model_list, auto_enc_mod
                             temp2 = temp2+f2
                         f_ftnet.append(temp1)
                         pf_ftnet.append(temp2)
-                    f_ftnet = torch.max(f_ftnet[0], f_ftnet[1])
-                    pf_ftnet = torch.max(pf_ftnet[0], pf_ftnet[1])
-                    #f_ftnet = f_ftnet/len(model_list)
-                    #pf_ftnet = pf_ftnet/len(model_list)
-
+                    #f_ftnet = torch.max(f_ftnet[0], f_ftnet[1])
+                    #pf_ftnet = torch.max(pf_ftnet[0], pf_ftnet[1])
+                    if len(model_list)>1:
+                        f_ftnet = (f_ftnet[0] + f_ftnet[1])/2
+                        pf_ftnet = (pf_ftnet[0] + pf_ftnet[1])/2
+                    else:
+                        f_ftnet=f_ftnet[0]
+                        pf_ftnet=pf_ftnet[0]
                     # feature size (n,2048,6)
                     # 1. To treat every part equally, I calculate the norm for every 2048-dim part feature.
                     # 2. To keep the cosine score==1, sqrt(6) is added to norm the whole feature (2048*6).
@@ -416,18 +420,18 @@ def train_model(model, criterion, optimizer, scheduler, model_list, auto_enc_mod
                     """
                     To normalize the feature vectors of siamese networks before concatenation uncomment this portion of code
                     
-                    fnorm = torch.norm(f, p=2, dim=1, keepdim=True) 
+                    fnorm = torch.norm(f, p=2, dim=1, keepdim=True) * np.sqrt(6) 
                     f = f.div(fnorm.expand_as(f))
                     f = f.view(f.size(0), -1)
                     
-                    pfnorm = torch.norm(pf, p=2, dim=1, keepdim=True)  
+                    pfnorm = torch.norm(pf, p=2, dim=1, keepdim=True) * np.sqrt(6) 
                     pf = pf.div(pfnorm.expand_as(pf))
                     pf = pf.view(pf.size(0), -1)
                     """
                 f = torch.cat((f,f_ftnet),1)
                 pf = torch.cat((pf,pf_ftnet),1)
-
-                
+                #f = (f_ftnet+f)/2
+                #pf = (pf_ftnet+pf)/2
 
                 # pf = Variable( pf, requires_grad=True)
                 neg_labels = pos_labels
@@ -623,10 +627,14 @@ if opt.auto_encoder:
     print("Auto encoder model structure")
     print(auto_enc_model)
 
+nm_bottleneck=2048
+if opt.pcb_backbone:
+    nm_bottleneck=12288
 
 if not opt.resume:
-    model = ft_net(len(class_names), return_f=True, num_bottleneck=2048)
-
+    model = ft_net(len(class_names), return_f=True, num_bottleneck=nm_bottleneck, pcb_backbone=opt.pcb_backbone)
+    #model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=1)
+    #model = PCB_test(model, num_parts=opt.parts)
 print("Siamese model")
 print(model)
 
