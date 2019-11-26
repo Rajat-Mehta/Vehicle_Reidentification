@@ -35,6 +35,7 @@ parser.add_argument('--PCB_V', action='store_true', help='Use PCB_Vertical model
 parser.add_argument('--PCB_CB', action='store_true', help='Use PCB_CheckerBoard model in fusion')
 parser.add_argument('--parts', default=6, type=int, help='number of parts in PCB')
 parser.add_argument('--auto_encoder', action='store_true', help='use auto encoder for dimensionality reduction')
+parser.add_argument('--pcb_backbone', action='store_true', help='sor siamese network use pcb backbone architecture or not')
 
 opt = parser.parse_args()
 
@@ -147,7 +148,7 @@ def extract_feature(model, dataloaders, model_list=None):
         n, c, h, w = img.size()
         count += n
         print(count)
-        ff = torch.FloatTensor(n, 2048).zero_()
+        ff = torch.FloatTensor(n, nm_bottleneck).zero_()
         if opt.PCB:
             ff = torch.FloatTensor(n,2048,6).zero_() # we have six parts
         if opt.fusion:
@@ -177,7 +178,10 @@ def extract_feature(model, dataloaders, model_list=None):
                     f_PCB = f_PCB.data.cpu().float()
                     f_PCB_f = f_PCB_f+f_PCB
                 ff_PCB.append(f_PCB_f)
-            ff_PCB = (ff_PCB[0] + ff_PCB[1])/ len(model_list)
+            if len(model_list)>1:
+                ff_PCB = (ff_PCB[0] + ff_PCB[1])/ len(model_list)
+            else:
+                ff_PCB = ff_PCB[0]
                 
         # norm feature
         if opt.PCB:
@@ -196,6 +200,7 @@ def extract_feature(model, dataloaders, model_list=None):
                 ff_PCB = ff_PCB.div(fnorm_PCB.expand_as(ff_PCB))
                 ff_PCB = ff_PCB.view(ff_PCB.size(0), -1)
                 ff = torch.cat((ff,ff_PCB),1)
+                #ff = (ff_PCB+ff)/2
 
         features = torch.cat((features,ff), 0)
     return features
@@ -228,11 +233,14 @@ query_cam, query_label = get_id(query_path)
 
 ######################################################################
 # Load Collected data Trained model
+nm_bottleneck=2048
+if opt.pcb_backbone:
+    nm_bottleneck=12288
 print('-------test-----------')
 if opt.use_dense:
     model_structure = ft_net_dense(opt.nclasses)
 else:
-    model_structure = ft_net(opt.nclasses, return_f=True, num_bottleneck=2048)
+    model_structure = ft_net(opt.nclasses, return_f=True, num_bottleneck=nm_bottleneck, pcb_backbone=opt.pcb_backbone)
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses, return_f=True, num_bottleneck=512)
