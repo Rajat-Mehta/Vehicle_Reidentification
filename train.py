@@ -84,7 +84,7 @@ parser.add_argument('--re_compute_features', action='store_true', help='re compu
 parser.add_argument('--auto_encode', action='store_true', help='train auto encoder for dimensionality reduction')
 parser.add_argument('--retrain_autoencode', action='store_true', help='retrain auto encoder for dimensionality reduction')
 parser.add_argument('--veri_wild', action='store_true', help='use veri wild dataset')
-parser.add_argument('--finetune_wild', action='store_true', help='use veri wild dataset')
+parser.add_argument('--finetune', action='store_true', help='do finetuning')
 
 opt = parser.parse_args()
 
@@ -117,6 +117,7 @@ elif opt.PCB and not opt.PCB_Ver:
     opt.h, opt.w = 192, 384
 
 veri_wild_classes = 30671
+veri_classes = 575
 
 if opt.resume:
     print("Resuming training from presaved model. ")
@@ -514,7 +515,7 @@ def save_train_config_files():
 
 def pcb_train(model, criterion, stage, num_epoch):
     base_lr = 0.1*opt.lr
-    if opt.finetune_wild:
+    if opt.finetune:
         base_lr = 0.1*0.1*opt.lr
 
     ignored_params = list(map(id, model.model.fc.parameters()))
@@ -760,7 +761,13 @@ if not opt.PCB:
 
 
 def load_pcb(network):
-    save_path = './model/ft_ResNet_PCB/finetune_wild/wild_79_vertical/net_099.pth'
+    if opt.finetune and opt.veri_wild:
+        save_path = './model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'
+    elif opt.finetune and not opt.veri_wild:
+        save_path = './model/ft_ResNet_PCB/veri_wild/79_epochs/net_079.pth'
+    else:
+        save_path = './model/ft_ResNet_PCB/finetune_wild/wild_79_vertical/net_099.pth'
+    print("Loading pre-trained model from: ", save_path)
     network.load_state_dict(torch.load(save_path), strict=False)
     network = network.eval().cuda()
     return network
@@ -1045,12 +1052,20 @@ if opt.PCB or opt.RPP :
             else:
                 model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
-                if opt.finetune_wild:
-                    model = PCB(veri_wild_classes, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                if opt.finetune:
+                    if opt.veri_wild:
+                        model = PCB(veri_classes, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
-                    print("Loading a PCB model pretrained on Veri-Wild dataset.")
-                    model.load_state_dict(torch.load('./model/ft_ResNet_PCB/veri_wild/79_epochs/net_079.pth'))
-                    
+                        print("Loading a PCB model pretrained on Veri-776 dataset.")
+                        model.load_state_dict(torch.load('./model/ft_ResNet_PCB/vertical/part6_vertical/net_079.pth'))
+                        print(model)
+                    else:
+                        model = PCB(veri_wild_classes, num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
+                        checkerboard=opt.CB, share_conv=opt.share_conv)
+                        print("Loading a PCB model pretrained on Veri-Wild dataset.")
+                        model.load_state_dict(torch.load('./model/ft_ResNet_PCB/veri_wild/79_epochs/net_079.pth'))
+                        print(model)
+                    print("Resetting classifier layer")
                     for i in range(opt.parts):
                         clf_name = 'classifier' + str(i)
                         model.__setattr__(clf_name, ClassBlock(2048, len(class_names), droprate=0.5, relu=opt.share_conv, bnorm=True, linear=not opt.share_conv,
@@ -1063,7 +1078,7 @@ if opt.PCB or opt.RPP :
     if opt.RPP:
         print("STARTING STEP 2 AND 3 OF PCB:")
         stage = 'rpp'
-        epochs = 20
+        epochs = 15
         if opt.no_induction:
             model = PCB(len(class_names), num_bottleneck=256, num_parts=opt.parts, parts_ver=opt.PCB_Ver,
                         checkerboard=opt.CB, share_conv=opt.share_conv)
@@ -1078,7 +1093,7 @@ if opt.PCB or opt.RPP :
         # step4: whole net training #
         print("STARTING STEP 4 OF PCB:")
         stage = 'full'
-        full_train(model, criterion, stage, 40)
+        full_train(model, criterion, stage, 15)
 
 
 else:
